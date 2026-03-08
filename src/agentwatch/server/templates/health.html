@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% set nav = "health" %}
+
+{% block title %}Health — AgentWatch{% endblock %}
+
+{% block content %}
+<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:24px;">
+    <h1 class="page-title" style="margin-bottom:0;">Health Checks</h1>
+    <div style="display:flex; align-items:center; gap:12px;">
+        <span id="refresh-indicator" class="duration" style="font-size:12px;"></span>
+        <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:var(--text-muted); cursor:pointer;">
+            <input type="checkbox" id="auto-refresh-toggle" checked style="cursor:pointer;">
+            Auto-refresh (30s)
+        </label>
+    </div>
+</div>
+
+{% if health %}
+<div class="stats-grid" id="health-stats">
+    {% set ok_count = health | selectattr('status', 'equalto', 'ok') | list | length %}
+    {% set warn_count = health | selectattr('status', 'equalto', 'warn') | list | length %}
+    {% set critical_count = health | selectattr('status', 'equalto', 'critical') | list | length %}
+    <div class="stat-card">
+        <div class="stat-value green" id="stat-ok">{{ ok_count }}</div>
+        <div class="stat-label">Healthy</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value yellow" id="stat-warn">{{ warn_count }}</div>
+        <div class="stat-label">Warning</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value red" id="stat-critical">{{ critical_count }}</div>
+        <div class="stat-label">Critical</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value accent" id="stat-total">{{ health | length }}</div>
+        <div class="stat-label">Total Checks</div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Status</th>
+                    <th>Check</th>
+                    <th>Agent</th>
+                    <th>Message</th>
+                    <th>Duration</th>
+                    <th>Last Run</th>
+                </tr>
+            </thead>
+            <tbody id="health-tbody">
+                {% for h in health %}
+                <tr>
+                    <td>
+                        <div class="health-dot {{ h.status }}" style="display:inline-block; vertical-align:middle;"></div>
+                        <span class="badge badge-{{ h.status }}">{{ h.status }}</span>
+                    </td>
+                    <td style="font-weight:500;">{{ h.name }}</td>
+                    <td>{{ h.agent_name }}</td>
+                    <td style="color:var(--text-muted); max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                        {{ h.message or '-' }}
+                    </td>
+                    <td class="duration">
+                        {% if h.duration_ms is not none %}{{ "%.1f"|format(h.duration_ms) }}ms{% else %}-{% endif %}
+                    </td>
+                    <td class="duration">{{ h.timestamp[:19] | replace("T", " ") }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+<div class="card">
+    <div class="empty">
+        <div class="empty-icon">💚</div>
+        <div>No health checks recorded yet.</div>
+        <div style="margin-top:8px; font-size:13px;">
+            Register checks with <code style="background:var(--bg); padding:2px 6px; border-radius:4px;">agentwatch.health.register("name", fn)</code>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<script>
+(function() {
+    const toggle = document.getElementById('auto-refresh-toggle');
+    const indicator = document.getElementById('refresh-indicator');
+    let timer = null;
+    let lastRefresh = Date.now();
+
+    function formatDuration(ms) {
+        if (ms < 1000) return Math.round(ms) + 'ms';
+        return (ms / 1000).toFixed(1) + 's';
+    }
+
+    function renderRow(h) {
+        const dur = h.duration_ms != null ? h.duration_ms.toFixed(1) + 'ms' : '-';
+        const ts = (h.timestamp || '').substring(0, 19).replace('T', ' ');
+        const msg = h.message || '-';
+        return `<tr>
+            <td>
+                <div class="health-dot ${h.status}" style="display:inline-block;vertical-align:middle;"></div>
+                <span class="badge badge-${h.status}">${h.status}</span>
+            </td>
+            <td style="font-weight:500;">${h.name}</td>
+            <td>${h.agent_name}</td>
+            <td style="color:var(--text-muted);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${msg}</td>
+            <td class="duration">${dur}</td>
+            <td class="duration">${ts}</td>
+        </tr>`;
+    }
+
+    async function refresh() {
+        try {
+            const resp = await fetch('/api/health');
+            const data = await resp.json();
+            const tbody = document.getElementById('health-tbody');
+            if (tbody && data.length > 0) {
+                tbody.innerHTML = data.map(renderRow).join('');
+
+                // Update stats
+                let ok = 0, warn = 0, crit = 0;
+                data.forEach(h => {
+                    if (h.status === 'ok') ok++;
+                    else if (h.status === 'warn') warn++;
+                    else if (h.status === 'critical') crit++;
+                });
+                const statOk = document.getElementById('stat-ok');
+                const statWarn = document.getElementById('stat-warn');
+                const statCrit = document.getElementById('stat-critical');
+                const statTotal = document.getElementById('stat-total');
+                if (statOk) statOk.textContent = ok;
+                if (statWarn) statWarn.textContent = warn;
+                if (statCrit) statCrit.textContent = crit;
+                if (statTotal) statTotal.textContent = data.length;
+            }
+            lastRefresh = Date.now();
+            if (indicator) indicator.textContent = 'Updated just now';
+        } catch (e) {
+            if (indicator) indicator.textContent = 'Update failed';
+        }
+    }
+
+    function startPolling() {
+        if (timer) clearInterval(timer);
+        timer = setInterval(refresh, 30000);
+    }
+
+    function stopPolling() {
+        if (timer) { clearInterval(timer); timer = null; }
+    }
+
+    if (toggle) {
+        toggle.addEventListener('change', () => {
+            if (toggle.checked) startPolling();
+            else stopPolling();
+        });
+    }
+
+    // Update "last updated" indicator
+    setInterval(() => {
+        if (!indicator) return;
+        const ago = Date.now() - lastRefresh;
+        if (ago < 5000) indicator.textContent = 'Updated just now';
+        else indicator.textContent = 'Updated ' + Math.round(ago / 1000) + 's ago';
+    }, 5000);
+
+    startPolling();
+})();
+</script>
+{% endblock %}

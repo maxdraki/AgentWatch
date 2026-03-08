@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% set nav = "dashboard" %}
+
+{% block title %}Dashboard — AgentWatch{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Dashboard</h1>
+
+<!-- Stats Grid -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-value accent">{{ stats.total_traces }}</div>
+        <div class="stat-label">Total Traces</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value {% if stats.recent_error_rate_pct > 10 %}red{% elif stats.recent_error_rate_pct > 5 %}yellow{% else %}green{% endif %}">
+            {{ stats.recent_error_rate_pct }}%
+        </div>
+        <div class="stat-label">Error Rate (last 100)</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value purple">{{ stats.total_logs }}</div>
+        <div class="stat-label">Log Entries</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value green">{{ stats.agents | length }}</div>
+        <div class="stat-label">Active Agents</div>
+    </div>
+</div>
+
+<!-- Two column: Health + Trace Status -->
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px;">
+    <!-- Health Status -->
+    <div class="card">
+        <div class="card-title">Health Checks</div>
+        {% if health %}
+            {% for h in health %}
+            <div class="health-bar">
+                <div class="health-dot {{ h.status }}"></div>
+                <span style="flex:1">{{ h.name }}</span>
+                <span class="badge badge-{{ h.status }}">{{ h.status }}</span>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="empty">
+                <div>No health checks recorded yet</div>
+            </div>
+        {% endif %}
+    </div>
+
+    <!-- Trace Status -->
+    <div class="card">
+        <div class="card-title">Trace Status</div>
+        <div style="display:flex; align-items:center; gap:24px;">
+            {% if status_chart %}
+            <div>{{ status_chart | safe }}</div>
+            {% endif %}
+            <div style="flex:1;">
+                {% if stats.trace_status_breakdown %}
+                    {% for status, count in stats.trace_status_breakdown.items() %}
+                    <div class="health-bar">
+                        <span class="badge badge-{{ status }}">{{ status }}</span>
+                        <span style="flex:1"></span>
+                        <span style="font-weight: 600; font-variant-numeric: tabular-nums;">{{ count }}</span>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="empty"><div>No traces yet</div></div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Duration Trend -->
+{% if duration_sparkline %}
+<div class="card" style="margin-bottom:24px;">
+    <div class="card-title">Trace Duration Trend (recent)</div>
+    <div style="padding: 4px 0;">{{ duration_sparkline | safe }}</div>
+</div>
+{% endif %}
+
+<!-- Recent Traces -->
+<div class="card">
+    <div class="card-title">Recent Traces</div>
+    {% if traces %}
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Status</th>
+                    <th>Name</th>
+                    <th>Agent</th>
+                    <th>Duration</th>
+                    <th>Started</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for t in traces %}
+                <tr>
+                    <td><span class="badge badge-{{ t.status }}">{{ t.status }}</span></td>
+                    <td><a href="/traces/{{ t.id }}">{{ t.name }}</a></td>
+                    <td>{{ t.agent_name }}</td>
+                    <td class="duration">
+                        {% if t.duration_ms is not none %}
+                            {% if t.duration_ms < 1000 %}{{ "%.0f"|format(t.duration_ms) }}ms
+                            {% elif t.duration_ms < 60000 %}{{ "%.1f"|format(t.duration_ms / 1000) }}s
+                            {% else %}{{ "%.1f"|format(t.duration_ms / 60000) }}m{% endif %}
+                        {% else %}-{% endif %}
+                    </td>
+                    <td class="duration">{{ t.started_at[:19] | replace("T", " ") }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty">
+        <div class="empty-icon">🔗</div>
+        <div>No traces yet. Start instrumenting your agents!</div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

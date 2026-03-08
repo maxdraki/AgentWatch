@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% set nav = "logs" %}
+
+{% block title %}Logs — AgentWatch{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Logs</h1>
+
+<div class="filters">
+    <form method="get" style="display:flex; gap:12px;">
+        <select name="level" class="filter-select" onchange="this.form.submit()">
+            <option value="">All levels</option>
+            <option value="debug" {% if level_filter == 'debug' %}selected{% endif %}>🔍 Debug</option>
+            <option value="info" {% if level_filter == 'info' %}selected{% endif %}>ℹ️ Info</option>
+            <option value="warn" {% if level_filter == 'warn' %}selected{% endif %}>⚠️ Warn</option>
+            <option value="error" {% if level_filter == 'error' %}selected{% endif %}>❌ Error</option>
+            <option value="critical" {% if level_filter == 'critical' %}selected{% endif %}>🔴 Critical</option>
+        </select>
+    </form>
+</div>
+
+<div class="card">
+    {% if logs %}
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Level</th>
+                    <th>Message</th>
+                    <th>Agent</th>
+                    <th>Trace</th>
+                    <th>Timestamp</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for entry in logs %}
+                <tr>
+                    <td><span class="log-{{ entry.level }}">{{ entry.level | upper }}</span></td>
+                    <td>{{ entry.message }}</td>
+                    <td>{{ entry.agent_name }}</td>
+                    <td>
+                        {% if entry.trace_id %}
+                        <a href="/traces/{{ entry.trace_id }}" style="font-family:monospace; font-size:12px;">
+                            {{ entry.trace_id[:8] }}…
+                        </a>
+                        {% else %}-{% endif %}
+                    </td>
+                    <td class="duration">{{ entry.timestamp[:19] | replace("T", " ") }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty">
+        <div class="empty-icon">📝</div>
+        <div>No logs found{% if level_filter %} at level "{{ level_filter }}"{% endif %}.</div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

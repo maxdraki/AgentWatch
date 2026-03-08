@@ -1,0 +1,267 @@
+{% extends "base.html" %}
+{% set nav = "traces" %}
+
+{% block title %}Trace {{ trace.id[:12] if trace else "Not Found" }} — AgentWatch{% endblock %}
+
+{% block content %}
+{% if trace %}
+<h1 class="page-title">
+    <span class="badge badge-{{ trace.status }}" style="font-size:14px;">{{ trace.status }}</span>
+    {{ trace.name }}
+</h1>
+
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-value" style="font-size:14px; font-family:monospace; word-break:break-all;">{{ trace.id }}</div>
+        <div class="stat-label">Trace ID</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value accent" style="font-size:20px;">{{ trace.agent_name }}</div>
+        <div class="stat-label">Agent</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" style="font-size:20px;">
+            {% if trace.duration_ms is not none %}
+                {% if trace.duration_ms < 1000 %}{{ "%.0f"|format(trace.duration_ms) }}ms
+                {% elif trace.duration_ms < 60000 %}{{ "%.1f"|format(trace.duration_ms / 1000) }}s
+                {% else %}{{ "%.1f"|format(trace.duration_ms / 60000) }}m{% endif %}
+            {% else %}-{% endif %}
+        </div>
+        <div class="stat-label">Duration</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" style="font-size:14px;">{{ trace.started_at[:19] | replace("T", " ") }}</div>
+        <div class="stat-label">Started</div>
+    </div>
+</div>
+
+{% if trace.metadata and trace.metadata != '{}' and trace.metadata != {} %}
+<div class="card">
+    <div class="card-title">Metadata</div>
+    <pre style="font-size:13px; color:var(--text-muted); white-space:pre-wrap;">{{ trace.metadata if trace.metadata is string else trace.metadata | tojson(indent=2) }}</pre>
+</div>
+{% endif %}
+
+{% if waterfall %}
+<div class="card">
+    <div class="card-title">Waterfall ({{ waterfall | length }} spans)</div>
+
+    <!-- Timeline ruler -->
+    <div class="waterfall-ruler">
+        <span>0ms</span>
+        {% if trace.duration_ms is not none %}
+        <span>
+            {% if trace.duration_ms < 1000 %}{{ "%.0f"|format(trace.duration_ms / 4) }}ms
+            {% else %}{{ "%.1f"|format(trace.duration_ms / 4000) }}s{% endif %}
+        </span>
+        <span>
+            {% if trace.duration_ms < 1000 %}{{ "%.0f"|format(trace.duration_ms / 2) }}ms
+            {% else %}{{ "%.1f"|format(trace.duration_ms / 2000) }}s{% endif %}
+        </span>
+        <span>
+            {% if trace.duration_ms < 1000 %}{{ "%.0f"|format(trace.duration_ms * 3 / 4) }}ms
+            {% else %}{{ "%.1f"|format(trace.duration_ms * 3 / 4000) }}s{% endif %}
+        </span>
+        <span>
+            {% if trace.duration_ms < 1000 %}{{ "%.0f"|format(trace.duration_ms) }}ms
+            {% else %}{{ "%.1f"|format(trace.duration_ms / 1000) }}s{% endif %}
+        </span>
+        {% endif %}
+    </div>
+
+    <div class="waterfall">
+        {% for span in waterfall %}
+        <div class="waterfall-row{% if span.status == 'failed' %} waterfall-failed{% endif %}" data-span-id="{{ span.id }}">
+            <div class="waterfall-label" style="padding-left: {{ span.depth * 20 + 8 }}px;">
+                <div style="display:flex; align-items:center; gap:6px; min-width:0;">
+                    {% if span.depth > 0 %}
+                    <span style="color:var(--text-muted); flex-shrink:0;">
+                        {% for _ in range(span.depth - 1) %}&nbsp;&nbsp;{% endfor %}└
+                    </span>
+                    {% endif %}
+                    <span class="badge badge-{{ span.status }}" style="font-size:10px; padding:1px 6px; flex-shrink:0;">{{ span.status[:4] }}</span>
+                    <span class="span-name" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ span.name }}</span>
+                </div>
+                <span class="duration" style="font-size:12px; flex-shrink:0; margin-left:auto;">
+                    {% if span.duration_ms is not none %}
+                        {% if span.duration_ms < 1000 %}{{ "%.0f"|format(span.duration_ms) }}ms
+                        {% else %}{{ "%.1f"|format(span.duration_ms / 1000) }}s{% endif %}
+                    {% endif %}
+                </span>
+            </div>
+            <div class="waterfall-bar-container">
+                <!-- Grid lines -->
+                <div class="waterfall-gridline" style="left:25%;"></div>
+                <div class="waterfall-gridline" style="left:50%;"></div>
+                <div class="waterfall-gridline" style="left:75%;"></div>
+
+                {% if span.duration_ms is not none %}
+                <div class="waterfall-bar {% if span.status == 'failed' %}bar-failed{% elif span.status == 'running' %}bar-running{% else %}bar-ok{% endif %}"
+                     style="width: {{ span.width_pct }}%; margin-left: {{ span.offset_pct }}%;"
+                     title="{{ span.name }}: {{ '%.0f'|format(span.duration_ms) }}ms (offset: {{ '%.0f'|format(span.offset_pct * (trace.duration_ms or 0) / 100) }}ms)">
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Span details (errors + events) -->
+        {% if span.error or span.events %}
+        <div class="waterfall-details" style="padding-left: {{ span.depth * 20 + 28 }}px;">
+            {% if span.error %}
+            <div class="span-error">❌ {{ span.error }}</div>
+            {% endif %}
+            {% for evt in span.events %}
+            <div class="span-event">📝 {{ evt.message }}</div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% endfor %}
+    </div>
+</div>
+
+<style>
+    .waterfall { padding: 0; }
+
+    .waterfall-ruler {
+        display: grid;
+        grid-template-columns: 300px 1fr;
+        gap: 12px;
+        padding: 4px 0 8px;
+        border-bottom: 1px solid var(--border);
+        margin-bottom: 4px;
+    }
+    .waterfall-ruler span {
+        font-size: 11px;
+        color: var(--text-muted);
+        font-variant-numeric: tabular-nums;
+    }
+    .waterfall-ruler span:first-child {
+        grid-column: 2;
+    }
+    .waterfall-ruler {
+        display: flex;
+        padding-left: 312px;
+        justify-content: space-between;
+    }
+
+    .waterfall-row {
+        display: grid;
+        grid-template-columns: 300px 1fr;
+        gap: 12px;
+        align-items: center;
+        padding: 5px 0;
+        border-bottom: 1px solid rgba(48,54,61,0.5);
+        transition: background 0.1s;
+    }
+    .waterfall-row:hover { background: var(--bg-hover); }
+    .waterfall-failed { background: rgba(248,81,73,0.04); }
+    .waterfall-failed:hover { background: rgba(248,81,73,0.08); }
+
+    .waterfall-label {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+    }
+
+    .waterfall-bar-container {
+        height: 20px;
+        background: rgba(13,17,23,0.5);
+        border-radius: 4px;
+        position: relative;
+        overflow: hidden;
+    }
+
+    .waterfall-gridline {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 1px;
+        background: rgba(48,54,61,0.4);
+    }
+
+    .waterfall-bar {
+        height: 100%;
+        border-radius: 3px;
+        min-width: 3px;
+        position: absolute;
+        top: 0;
+        transition: opacity 0.15s;
+        cursor: default;
+    }
+    .waterfall-bar:hover { opacity: 0.85; }
+
+    .bar-ok {
+        background: linear-gradient(90deg, #2ea043, #3fb950);
+        box-shadow: 0 0 4px rgba(63,185,80,0.3);
+    }
+    .bar-failed {
+        background: linear-gradient(90deg, #da3633, #f85149);
+        box-shadow: 0 0 4px rgba(248,81,73,0.3);
+    }
+    .bar-running {
+        background: linear-gradient(90deg, #bb8009, #d29922);
+        box-shadow: 0 0 4px rgba(210,153,34,0.3);
+    }
+
+    .waterfall-details {
+        padding: 2px 0 6px;
+        border-bottom: 1px solid rgba(48,54,61,0.3);
+    }
+    .span-error {
+        color: var(--red);
+        font-size: 13px;
+        padding: 2px 0;
+    }
+    .span-event {
+        font-size: 13px;
+        color: var(--text-muted);
+        padding: 1px 0;
+    }
+
+    /* Span metadata on hover */
+    .waterfall-row:hover .span-name { color: var(--accent); }
+
+    @media (max-width: 768px) {
+        .waterfall-row {
+            grid-template-columns: 1fr;
+            gap: 4px;
+        }
+        .waterfall-ruler { display: none; }
+        .waterfall-bar-container { height: 12px; }
+    }
+</style>
+{% elif trace.spans %}
+<!-- Fallback for traces without computed waterfall data -->
+<div class="card">
+    <div class="card-title">Spans ({{ trace.spans | length }})</div>
+    <ul class="span-tree">
+        {% for span in trace.spans %}
+        <li>
+            <span class="badge badge-{{ span.status }}" style="font-size:10px;">{{ span.status }}</span>
+            <span class="span-name">{{ span.name }}</span>
+            {% if span.duration_ms %}
+            <span class="duration"> — {{ "%.0f"|format(span.duration_ms) }}ms</span>
+            {% endif %}
+            {% if span.error %}
+            <div class="span-error">❌ {{ span.error }}</div>
+            {% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+<div style="margin-top: 16px;">
+    <a href="/traces">&larr; Back to traces</a>
+</div>
+
+{% else %}
+<div class="empty">
+    <div class="empty-icon">🔍</div>
+    <div>Trace not found.</div>
+    <div style="margin-top: 8px;"><a href="/traces">Browse all traces</a></div>
+</div>
+{% endif %}
+{% endblock %}

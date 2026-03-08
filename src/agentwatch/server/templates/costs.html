@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% set nav = "costs" %}
+
+{% block title %}Costs — AgentWatch{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Cost Tracking</h1>
+
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-value accent">${{ "%.4f"|format(summary.total_cost_usd) }}</div>
+        <div class="stat-label">Total Cost (USD)</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value purple">{{ "{:,}".format(summary.total_tokens) }}</div>
+        <div class="stat-label">Total Tokens</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ "{:,}".format(summary.total_input_tokens) }}</div>
+        <div class="stat-label">Input Tokens</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ "{:,}".format(summary.total_output_tokens) }}</div>
+        <div class="stat-label">Output Tokens</div>
+    </div>
+</div>
+
+{% if timeline_svg %}
+<div class="card">
+    <div class="card-title">Cost Trend (Last 7 Days)</div>
+    <div style="padding:8px 0;">{{ timeline_svg | safe }}</div>
+    {% if timeline_labels %}
+    <div style="display:flex; justify-content:space-between; padding:0 2px; font-size:11px; color:var(--text-muted);">
+        {% for label in timeline_labels %}
+        <span>{{ label }}</span>
+        {% endfor %}
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
+{% if summary.by_model %}
+<div class="card">
+    <div class="card-title">Cost by Model</div>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Model</th>
+                    <th style="text-align:right">Cost (USD)</th>
+                    <th style="text-align:right">Input Tokens</th>
+                    <th style="text-align:right">Output Tokens</th>
+                    <th style="text-align:right">Calls</th>
+                    <th>Distribution</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for m in summary.by_model %}
+                <tr>
+                    <td style="font-weight:500;">{{ m.model }}</td>
+                    <td style="text-align:right; font-variant-numeric:tabular-nums;">${{ "%.4f"|format(m.cost_usd) }}</td>
+                    <td style="text-align:right; font-variant-numeric:tabular-nums;">{{ "{:,}".format(m.input_tokens) }}</td>
+                    <td style="text-align:right; font-variant-numeric:tabular-nums;">{{ "{:,}".format(m.output_tokens) }}</td>
+                    <td style="text-align:right;">{{ m.count }}</td>
+                    <td>
+                        {% if summary.total_cost_usd > 0 %}
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <div style="flex:1; height:6px; background:var(--border); border-radius:3px; overflow:hidden;">
+                                <div style="width:{{ (m.cost_usd / summary.total_cost_usd * 100)|round }}%; height:100%; background:var(--accent); border-radius:3px;"></div>
+                            </div>
+                            <span class="duration">{{ (m.cost_usd / summary.total_cost_usd * 100)|round }}%</span>
+                        </div>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+{% if usage %}
+<div class="card">
+    <div class="card-title">Recent Usage Records</div>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Model</th>
+                    <th>Agent</th>
+                    <th style="text-align:right">Input</th>
+                    <th style="text-align:right">Output</th>
+                    <th style="text-align:right">Cost</th>
+                    <th>Trace</th>
+                    <th>Timestamp</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for u in usage %}
+                <tr>
+                    <td>{{ u.model }}</td>
+                    <td>{{ u.agent_name }}</td>
+                    <td style="text-align:right; font-variant-numeric:tabular-nums;">{{ "{:,}".format(u.input_tokens) }}</td>
+                    <td style="text-align:right; font-variant-numeric:tabular-nums;">{{ "{:,}".format(u.output_tokens) }}</td>
+                    <td style="text-align:right; font-variant-numeric:tabular-nums;">${{ "%.6f"|format(u.estimated_cost_usd) }}</td>
+                    <td>
+                        {% if u.trace_id %}
+                        <a href="/traces/{{ u.trace_id }}" style="font-family:monospace; font-size:12px;">{{ u.trace_id[:8] }}…</a>
+                        {% else %}-{% endif %}
+                    </td>
+                    <td class="duration">{{ u.timestamp[:19] | replace("T", " ") }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+<div class="card">
+    <div class="empty">
+        <div class="empty-icon">💰</div>
+        <div>No cost records yet.</div>
+        <div style="margin-top:8px; font-size:13px;">
+            Track costs with <code style="background:var(--bg); padding:2px 6px; border-radius:4px;">agentwatch.costs.record(model, input_tokens, output_tokens)</code>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

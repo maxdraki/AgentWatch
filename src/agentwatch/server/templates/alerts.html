@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% set nav = "alerts" %}
+
+{% block title %}Alerts — AgentWatch{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Alert Configuration & History</h1>
+
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-value accent">{{ rules | length }}</div>
+        <div class="stat-label">Active Rules</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value {% if recent_alerts %}yellow{% else %}green{% endif %}">{{ recent_alerts | length }}</div>
+        <div class="stat-label">Recent Alerts</div>
+    </div>
+</div>
+
+<!-- Active Rules -->
+<div class="card">
+    <div class="card-title">Active Alert Rules</div>
+    {% if rules %}
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Type</th>
+                    <th>Status</th>
+                    <th>Cooldown</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for rule in rules %}
+                <tr>
+                    <td style="font-weight:500;">{{ rule.name }}</td>
+                    <td><span class="badge badge-info">{{ rule.alert_type }}</span></td>
+                    <td>
+                        {% if rule.enabled %}
+                        <span class="badge badge-ok">enabled</span>
+                        {% else %}
+                        <span class="badge badge-unknown">disabled</span>
+                        {% endif %}
+                    </td>
+                    <td class="duration">{{ rule.cooldown_seconds }}s</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty">
+        <div class="empty-icon">🔔</div>
+        <div>No alert rules configured.</div>
+        <div style="margin-top:8px; font-size:13px;">
+            Configure with <code style="background:var(--bg); padding:2px 6px; border-radius:4px;">agentwatch.alerts.on_health_change(handler)</code>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Alert History -->
+{% if recent_alerts %}
+<div class="card">
+    <div class="card-title">Recent Alert History</div>
+    {% for alert in recent_alerts %}
+    <div style="padding:12px 0; border-bottom:1px solid var(--border);{% if loop.last %} border-bottom:none;{% endif %}">
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
+            {% if alert.level == 'critical' %}
+            <span class="badge badge-critical">CRITICAL</span>
+            {% elif alert.level == 'warning' %}
+            <span class="badge badge-warn">WARNING</span>
+            {% else %}
+            <span class="badge badge-info">INFO</span>
+            {% endif %}
+            <span class="badge badge-unknown">{{ alert.type }}</span>
+            <span style="font-weight:600;">{{ alert.title }}</span>
+        </div>
+        <p style="font-size:13px; color:var(--text-muted); margin-bottom:4px;">{{ alert.message }}</p>
+        <div style="font-size:12px; color:var(--text-muted);">
+            {{ alert.timestamp[:19] | replace("T", " ") }}
+            {% if alert.agent_name %} · {{ alert.agent_name }}{% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<!-- Setup Guide -->
+<div class="card" style="border-left: 3px solid var(--accent);">
+    <div class="card-title">Quick Setup</div>
+    <pre style="font-size:13px; color:var(--text-muted); white-space:pre-wrap; line-height:1.8;">import agentwatch
+
+# Alert on health check failures
+agentwatch.alerts.on_health_change(handler=my_handler)
+
+# Alert when error rate exceeds 10%
+agentwatch.alerts.on_error_rate(threshold_pct=10.0)
+
+# Alert when costs exceed $1/day
+agentwatch.alerts.on_cost_threshold(threshold_usd=1.0, period_hours=24)
+
+# Webhook delivery (Slack, Discord, etc.)
+agentwatch.alerts.webhook("https://hooks.slack.com/...")
+
+# Check all rules
+alerts = agentwatch.alerts.check_all()</pre>
+</div>
+{% endblock %}

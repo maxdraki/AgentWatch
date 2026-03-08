@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% set nav = "patterns" %}
+
+{% block title %}Patterns — AgentWatch{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Pattern Detection & Trends</h1>
+
+<!-- Trend Overview -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-value {% if trends.direction == 'stable' %}green{% elif trends.direction == 'improving' %}accent{% elif trends.direction == 'degrading' %}red{% else %}yellow{% endif %}">
+            {% if trends.direction == 'stable' %}✅{% elif trends.direction == 'improving' %}📈{% elif trends.direction == 'degrading' %}🔴{% else %}⚠️{% endif %}
+            {{ trends.direction | upper }}
+        </div>
+        <div class="stat-label">Overall Trend</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value {% if trends.error_rate > 10 %}red{% elif trends.error_rate > 5 %}yellow{% else %}green{% endif %}">
+            {{ "%.1f"|format(trends.error_rate) }}%
+        </div>
+        <div class="stat-label">Error Rate</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">
+            {% if trends.avg_duration_ms is not none %}
+                {% if trends.avg_duration_ms < 1000 %}{{ "%.0f"|format(trends.avg_duration_ms) }}ms
+                {% else %}{{ "%.1f"|format(trends.avg_duration_ms / 1000) }}s{% endif %}
+            {% else %}-{% endif %}
+        </div>
+        <div class="stat-label">Avg Duration</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value accent">{{ patterns | length }}</div>
+        <div class="stat-label">Patterns Detected</div>
+    </div>
+</div>
+
+{% if trends.summary %}
+<div class="card" style="border-left: 3px solid {% if trends.direction == 'stable' %}var(--green){% elif trends.direction == 'degrading' %}var(--red){% else %}var(--yellow){% endif %};">
+    <p style="font-size:14px;">{{ trends.summary }}</p>
+</div>
+{% endif %}
+
+<!-- Detected Patterns -->
+{% if patterns %}
+<div class="card">
+    <div class="card-title">Detected Patterns</div>
+    {% for p in patterns %}
+    <div style="padding:16px 0; border-bottom:1px solid var(--border);{% if loop.last %} border-bottom:none;{% endif %}">
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+            <span class="badge badge-{{ p.severity }}">{{ p.severity | upper }}</span>
+            <span class="badge badge-info">{{ p.type | replace('_', ' ') }}</span>
+            <span style="font-weight:600;">{{ p.title }}</span>
+        </div>
+        <p style="font-size:13px; color:var(--text-muted); margin-bottom:4px;">{{ p.description }}</p>
+        <div style="font-size:12px; color:var(--text-muted); display:flex; gap:16px;">
+            {% if p.occurrences > 1 %}
+            <span>Occurrences: <strong>{{ p.occurrences }}</strong></span>
+            {% endif %}
+            {% if p.agent_name %}
+            <span>Agent: {{ p.agent_name }}</span>
+            {% endif %}
+            {% if p.first_seen %}
+            <span>First seen: {{ p.first_seen[:19] | replace("T", " ") }}</span>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="card">
+    <div class="empty">
+        <div class="empty-icon">✅</div>
+        <div>No patterns detected. Systems look healthy!</div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Trend Details -->
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+    <div class="card">
+        <div class="card-title">Duration Trend</div>
+        {% if trends.duration_trend %}
+        <div style="display:flex; align-items:center; gap:8px;">
+            {% if trends.duration_trend == 'stable' %}
+                <span class="badge badge-ok">STABLE</span>
+                <span style="font-size:13px; color:var(--text-muted);">Response times are consistent</span>
+            {% elif trends.duration_trend == 'improving' %}
+                <span class="badge badge-ok">IMPROVING</span>
+                <span style="font-size:13px; color:var(--text-muted);">Response times are decreasing</span>
+            {% elif trends.duration_trend == 'degrading' %}
+                <span class="badge badge-critical">DEGRADING</span>
+                <span style="font-size:13px; color:var(--text-muted);">Response times are increasing</span>
+            {% else %}
+                <span class="badge badge-warn">UNSTABLE</span>
+                <span style="font-size:13px; color:var(--text-muted);">Response times are inconsistent</span>
+            {% endif %}
+        </div>
+        {% else %}
+        <span style="color:var(--text-muted); font-size:13px;">Insufficient data</span>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <div class="card-title">Health Trend</div>
+        {% if trends.health_trend %}
+        <div style="display:flex; align-items:center; gap:8px;">
+            {% if trends.health_trend == 'stable' %}
+                <span class="badge badge-ok">STABLE</span>
+                <span style="font-size:13px; color:var(--text-muted);">All checks passing</span>
+            {% elif trends.health_trend == 'improving' %}
+                <span class="badge badge-ok">IMPROVING</span>
+                <span style="font-size:13px; color:var(--text-muted);">Issues are resolving</span>
+            {% elif trends.health_trend == 'degrading' %}
+                <span class="badge badge-critical">DEGRADING</span>
+                <span style="font-size:13px; color:var(--text-muted);">Multiple checks failing</span>
+            {% else %}
+                <span class="badge badge-warn">UNSTABLE</span>
+                <span style="font-size:13px; color:var(--text-muted);">Mixed results</span>
+            {% endif %}
+        </div>
+        {% else %}
+        <span style="color:var(--text-muted); font-size:13px;">Insufficient data</span>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

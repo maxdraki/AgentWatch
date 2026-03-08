@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}AgentWatch{% endblock %}</title>
+    <style>
+        :root {
+            --bg: #0d1117;
+            --bg-card: #161b22;
+            --bg-hover: #1c2128;
+            --border: #30363d;
+            --text: #e6edf3;
+            --text-muted: #8b949e;
+            --accent: #58a6ff;
+            --green: #3fb950;
+            --yellow: #d29922;
+            --red: #f85149;
+            --purple: #bc8cff;
+            --radius: 8px;
+            --shadow: 0 1px 3px rgba(0,0,0,0.3);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.5;
+            min-height: 100vh;
+        }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        /* Layout */
+        .layout {
+            display: flex;
+            min-height: 100vh;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 220px;
+            background: var(--bg-card);
+            border-right: 1px solid var(--border);
+            padding: 20px 0;
+            flex-shrink: 0;
+            position: sticky;
+            top: 0;
+            height: 100vh;
+        }
+
+        .sidebar-logo {
+            padding: 0 20px 20px;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 16px;
+        }
+
+        .sidebar-logo h1 {
+            font-size: 18px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .sidebar-logo span {
+            font-size: 11px;
+            color: var(--text-muted);
+            font-weight: 400;
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 20px;
+            color: var(--text-muted);
+            font-size: 14px;
+            transition: all 0.15s;
+        }
+
+        .nav-item:hover {
+            background: var(--bg-hover);
+            color: var(--text);
+            text-decoration: none;
+        }
+
+        .nav-item.active {
+            color: var(--text);
+            background: var(--bg-hover);
+            border-right: 2px solid var(--accent);
+        }
+
+        .nav-icon { font-size: 16px; width: 20px; text-align: center; }
+
+        /* Main content */
+        .main {
+            flex: 1;
+            padding: 32px;
+            max-width: 1200px;
+        }
+
+        .page-title {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 24px;
+        }
+
+        /* Cards */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+
+        .card-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 12px;
+        }
+
+        /* Stats grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .stat-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 20px;
+        }
+
+        .stat-value {
+            font-size: 32px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+
+        .stat-label {
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+
+        .stat-value.green { color: var(--green); }
+        .stat-value.yellow { color: var(--yellow); }
+        .stat-value.red { color: var(--red); }
+        .stat-value.accent { color: var(--accent); }
+        .stat-value.purple { color: var(--purple); }
+
+        /* Tables */
+        .table-wrap {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+
+        th {
+            text-align: left;
+            padding: 10px 12px;
+            font-weight: 600;
+            color: var(--text-muted);
+            border-bottom: 1px solid var(--border);
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        td {
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        tr:hover { background: var(--bg-hover); }
+        tr:last-child td { border-bottom: none; }
+
+        /* Status badges */
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .badge-ok, .badge-completed { background: rgba(63,185,80,0.15); color: var(--green); }
+        .badge-warn, .badge-running { background: rgba(210,153,34,0.15); color: var(--yellow); }
+        .badge-critical, .badge-failed { background: rgba(248,81,73,0.15); color: var(--red); }
+        .badge-unknown { background: rgba(139,148,158,0.15); color: var(--text-muted); }
+        .badge-info { background: rgba(88,166,255,0.15); color: var(--accent); }
+
+        /* Duration */
+        .duration { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+        /* Span tree */
+        .span-tree { padding: 0; list-style: none; }
+        .span-tree li { padding: 8px 0; border-bottom: 1px solid var(--border); }
+        .span-tree li:last-child { border-bottom: none; }
+        .span-name { font-weight: 500; }
+        .span-event { font-size: 13px; color: var(--text-muted); padding-left: 20px; }
+        .span-error { color: var(--red); font-size: 13px; padding-left: 20px; }
+
+        /* Empty state */
+        .empty {
+            text-align: center;
+            color: var(--text-muted);
+            padding: 40px 20px;
+            font-size: 14px;
+        }
+
+        .empty-icon { font-size: 40px; margin-bottom: 12px; }
+
+        /* Health bar */
+        .health-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .health-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .health-dot.ok { background: var(--green); }
+        .health-dot.warn { background: var(--yellow); }
+        .health-dot.critical { background: var(--red); }
+        .health-dot.unknown { background: var(--text-muted); }
+
+        /* Log levels */
+        .log-debug { color: var(--text-muted); }
+        .log-info { color: var(--accent); }
+        .log-warn { color: var(--yellow); }
+        .log-error { color: var(--red); }
+        .log-critical { color: var(--red); font-weight: 600; }
+
+        /* Filters */
+        .filters {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .filter-select {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            padding: 6px 12px;
+            font-size: 13px;
+        }
+
+        /* Mobile nav toggle */
+        .mobile-nav-toggle {
+            display: none;
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1000;
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: var(--accent);
+            color: var(--bg);
+            border: none;
+            font-size: 22px;
+            cursor: pointer;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.4);
+            transition: transform 0.2s;
+        }
+        .mobile-nav-toggle:active { transform: scale(0.95); }
+
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 999;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .sidebar {
+                display: none;
+                position: fixed;
+                top: 0; left: 0; bottom: 0;
+                z-index: 1001;
+                width: 220px;
+            }
+            .sidebar.open { display: flex; flex-direction: column; }
+            .sidebar-overlay.open { display: block; }
+            .mobile-nav-toggle { display: flex; align-items: center; justify-content: center; }
+            .main { padding: 16px; }
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+    </style>
+</head>
+<body>
+    <div class="layout">
+        <nav class="sidebar">
+            <div class="sidebar-logo">
+                <h1>🔍 AgentWatch</h1>
+                <span>v0.1.0</span>
+            </div>
+            <a href="/" class="nav-item {% if nav == 'dashboard' %}active{% endif %}">
+                <span class="nav-icon">📊</span> Dashboard
+            </a>
+            <a href="/traces" class="nav-item {% if nav == 'traces' %}active{% endif %}">
+                <span class="nav-icon">🔗</span> Traces
+            </a>
+            <a href="/logs" class="nav-item {% if nav == 'logs' %}active{% endif %}">
+                <span class="nav-icon">📝</span> Logs
+            </a>
+            <a href="/health" class="nav-item {% if nav == 'health' %}active{% endif %}">
+                <span class="nav-icon">💚</span> Health
+            </a>
+            <a href="/costs" class="nav-item {% if nav == 'costs' %}active{% endif %}">
+                <span class="nav-icon">💰</span> Costs
+            </a>
+            <a href="/patterns" class="nav-item {% if nav == 'patterns' %}active{% endif %}">
+                <span class="nav-icon">🔍</span> Patterns
+            </a>
+            <a href="/alerts" class="nav-item {% if nav == 'alerts' %}active{% endif %}">
+                <span class="nav-icon">🔔</span> Alerts
+            </a>
+            <a href="/agents" class="nav-item {% if nav == 'agents' %}active{% endif %}">
+                <span class="nav-icon">🤖</span> Agents
+            </a>
+        </nav>
+        <main class="main">
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebar-overlay"></div>
+    <button class="mobile-nav-toggle" id="mobile-nav-toggle" aria-label="Toggle navigation">☰</button>
+
+    <script>
+    (function() {
+        const toggle = document.getElementById('mobile-nav-toggle');
+        const overlay = document.getElementById('sidebar-overlay');
+        const sidebar = document.querySelector('.sidebar');
+        if (!toggle || !overlay || !sidebar) return;
+
+        function open() {
+            sidebar.classList.add('open');
+            overlay.classList.add('open');
+            toggle.textContent = '✕';
+        }
+        function close() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('open');
+            toggle.textContent = '☰';
+        }
+
+        toggle.addEventListener('click', () => {
+            sidebar.classList.contains('open') ? close() : open();
+        });
+        overlay.addEventListener('click', close);
+
+        // Close on nav click
+        sidebar.querySelectorAll('.nav-item').forEach(item => {
+            item.addEventListener('click', close);
+        });
+    })();
+    </script>
+</body>
+</html>
