@@ -90,13 +90,23 @@ def _compute_waterfall(trace: dict[str, Any]) -> list[dict[str, Any]]:
     return result
 
 
-def create_app(db_path: str | None = None) -> FastAPI:
+def create_app(
+    db_path: str | None = None,
+    auth_token: str | None = None,
+) -> FastAPI:
     """
     Create the FastAPI application.
 
     Args:
         db_path: Path to SQLite database. Defaults to ~/.agentwatch/agentwatch.db
+        auth_token: Optional authentication token. When set, all dashboard
+            pages and API endpoints require this token. Can also be set via
+            AGENTWATCH_AUTH_TOKEN environment variable.
     """
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from starlette.responses import RedirectResponse, Response as StarletteResponse
+    from agentwatch.auth import AuthConfig, extract_token, verify_token, render_login_page
+
     app = FastAPI(
         title="AgentWatch",
         description="Lightweight observability for autonomous AI agents",
@@ -107,6 +117,98 @@ def create_app(db_path: str | None = None) -> FastAPI:
 
     # Shared storage instance
     storage = Storage(db_path=db_path)
+
+    # ─── Authentication ──────────────────────────────────────────────────
+
+    auth_config = AuthConfig.from_env()
+    if auth_token:
+        auth_config.token = auth_token
+
+    if auth_config.enabled:
+        class AuthMiddleware(BaseHTTPMiddleware):
+            """Middleware that enforces token authentication."""
+
+            async def dispatch(self, request: Request, call_next):
+                path = request.url.path
+
+                # Allow excluded paths (health, metrics)
+                for excluded in auth_config.excluded_paths:
+                    if path == excluded or path.startswith(excluded + "/"):
+                        return await call_next(request)
+
+                # Allow login page and static assets
+                if path in ("/login", "/favicon.ico"):
+                    return await call_next(request)
+
+                # Extract token from request
+                token = extract_token(
+                    query_params=dict(request.query_params),
+                    headers=dict(request.headers),
+                    cookies=request.cookies,
+                    cookie_name=auth_config.cookie_name,
+                )
+
+                if token and auth_config.token and verify_token(token, auth_config.token):
+                    return await call_next(request)
+
+                # Not authenticated
+                if path.startswith("/api/"):
+                    return StarletteResponse(
+                        content='{"error": "Authentication required"}',
+                        status_code=401,
+                        media_type="application/json",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+
+                # Redirect HTML pages to login
+                return RedirectResponse(
+                    url=f"/login?next={path}",
+                    status_code=302,
+                )
+
+        app.add_middleware(AuthMiddleware)
+
+    # ─── Login endpoints ─────────────────────────────────────────────────
+
+    @app.get("/login", response_class=HTMLResponse)
+    async def login_page(request: Request, next: str = "/", error: str | None = None):
+        """Login page for token authentication."""
+        if not auth_config.enabled:
+            return RedirectResponse(url="/")
+        return HTMLResponse(render_login_page(error=error, next_url=next))
+
+    @app.post("/login")
+    async def login_submit(request: Request):
+        """Handle login form submission."""
+        if not auth_config.enabled:
+            return RedirectResponse(url="/", status_code=302)
+
+        form = await request.form()
+        token = str(form.get("token", ""))
+        next_url = str(form.get("next", "/"))
+
+        if auth_config.token and verify_token(token, auth_config.token):
+            response = RedirectResponse(url=next_url, status_code=302)
+            response.set_cookie(
+                key=auth_config.cookie_name,
+                value=token,
+                max_age=auth_config.cookie_max_age,
+                httponly=True,
+                samesite="lax",
+            )
+            return response
+
+        return HTMLResponse(
+            render_login_page(error="Invalid token. Please try again.", next_url=next_url),
+            status_code=401,
+        )
+
+    @app.get("/logout")
+    async def logout(request: Request):
+        """Clear auth cookie and redirect to login."""
+        response = RedirectResponse(url="/login", status_code=302)
+        response.delete_cookie(key=auth_config.cookie_name)
+        return response
 
     # ─── Dashboard (HTML) ────────────────────────────────────────────────
 
@@ -584,6 +686,7 @@ def run_server(
     db_path: str | None = None,
     host: str = "0.0.0.0",
     port: int = 8470,
+    auth_token: str | None = None,
 ) -> None:
     """
     Start the AgentWatch dashboard server.
@@ -592,9 +695,16 @@ def run_server(
         db_path: Path to SQLite database.
         host: Host to bind to.
         port: Port to listen on.
+        auth_token: Optional authentication token for dashboard access.
     """
     import uvicorn
 
-    app = create_app(db_path=db_path)
-    print(f"\n  🔍 AgentWatch Dashboard: http://{host}:{port}\n")
+    app = create_app(db_path=db_path, auth_token=auth_token)
+    print(f"\n  🔭 AgentWatch Dashboard: http://{host}:{port}")
+    if auth_token:
+        from agentwatch.auth import hash_token
+        print(f"  🔒 Authentication enabled (token hash: {hash_token(auth_token)})")
+    else:
+        print("  🔓 No authentication — dashboard is publicly accessible")
+    print()
     uvicorn.run(app, host=host, port=port, log_level="info")

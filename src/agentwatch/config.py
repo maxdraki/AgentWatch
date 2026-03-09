@@ -260,6 +260,7 @@ def _basic_toml_parse(content: str) -> dict[str, Any]:
             value = value.strip()
 
             # Parse value
+            parsed: Any
             if value.startswith('"') and value.endswith('"'):
                 parsed = value[1:-1]
             elif value.lower() == "true":

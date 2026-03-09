@@ -368,8 +368,9 @@ def export_jsonl(
         tables = ["traces", "logs", "health", "costs"]
 
     should_close = False
+    f: TextIO
     if isinstance(output, str):
-        f = open(output, "w")
+        f = open(output, "w")  # type: ignore[assignment]
         should_close = True
     else:
         f = output

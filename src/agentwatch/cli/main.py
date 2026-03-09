@@ -15,6 +15,7 @@ Usage:
     agentwatch db prune [--days N]        Prune old data
     agentwatch db vacuum                  Reclaim disk space
     agentwatch db export [-o FILE]        Export data to JSONL
+    agentwatch tail [--traces]             Follow logs in real-time
     agentwatch serve [--port N]           Start web dashboard
     agentwatch version                    Show version
 """
@@ -514,11 +515,165 @@ def cmd_db_export(args: argparse.Namespace) -> None:
 def cmd_serve(args: argparse.Namespace) -> None:
     """Start the web dashboard server."""
     from agentwatch.server.app import run_server
+    auth_token = getattr(args, "auth_token", None)
+    if not auth_token:
+        import os
+        auth_token = os.environ.get("AGENTWATCH_AUTH_TOKEN")
     run_server(
         db_path=getattr(args, "db", None),
         host=getattr(args, "host", "0.0.0.0"),
         port=getattr(args, "port", 8470),
+        auth_token=auth_token,
     )
+
+
+def cmd_tail(args: argparse.Namespace) -> None:
+    """Follow logs and traces in real-time (like tail -f)."""
+    import time
+
+    storage = _get_storage(args)
+    interval = getattr(args, "interval", 2.0)
+    show_traces = getattr(args, "traces", False)
+    level_filter = getattr(args, "level", None)
+    agent_filter = getattr(args, "agent", None)
+
+    # ANSI colours for log levels
+    LEVEL_COLORS = {
+        "debug": "\033[90m",    # grey
+        "info": "\033[36m",     # cyan
+        "warn": "\033[33m",     # yellow
+        "warning": "\033[33m",  # yellow
+        "error": "\033[31m",    # red
+        "critical": "\033[91m", # bright red
+    }
+    RESET = "\033[0m"
+    DIM = "\033[2m"
+    BOLD = "\033[1m"
+    GREEN = "\033[32m"
+    RED = "\033[31m"
+    BLUE = "\033[34m"
+
+    # Track what we've seen
+    seen_log_ids: set[str] = set()
+    seen_trace_ids: set[str] = set()
+
+    # Load initial state (last 5 of each, just to show recent context)
+    initial_logs = storage.get_logs(limit=5, agent_name=agent_filter)
+    for log in reversed(initial_logs):
+        seen_log_ids.add(log["id"])
+    if show_traces:
+        initial_traces = storage.get_traces(limit=5, agent_name=agent_filter)
+        for t in reversed(initial_traces):
+            seen_trace_ids.add(t["id"])
+
+    print(f"{DIM}─── AgentWatch tail ({'traces + ' if show_traces else ''}logs) ───{RESET}")
+    print(f"{DIM}Polling every {interval}s. Press Ctrl+C to stop.{RESET}\n")
+
+    try:
+        while True:
+            # Check for new logs
+            logs = storage.get_logs(limit=20, agent_name=agent_filter)
+            new_logs = [l for l in reversed(logs) if l["id"] not in seen_log_ids]
+
+            for log in new_logs:
+                seen_log_ids.add(log["id"])
+                lvl = log.get("level", "info").lower()
+                if level_filter and lvl != level_filter.lower():
+                    continue
+
+                color = LEVEL_COLORS.get(lvl, "")
+                ts = log.get("timestamp", "")[:19]
+                agent = log.get("agent_name", "")
+                msg = log.get("message", "")
+                lvl_display = lvl.upper().ljust(8)
+
+                print(f"{DIM}{ts}{RESET} {color}{lvl_display}{RESET} {DIM}[{agent}]{RESET} {msg}")
+
+                # Show metadata if present
+                meta = log.get("metadata")
+                if meta:
+                    for k, v in meta.items():
+                        print(f"  {DIM}{k}: {v}{RESET}")
+
+            # Check for new traces
+            if show_traces:
+                traces = storage.get_traces(limit=20, agent_name=agent_filter)
+                new_traces = [t for t in reversed(traces) if t["id"] not in seen_trace_ids]
+
+                for t in new_traces:
+                    seen_trace_ids.add(t["id"])
+                    status = t.get("status", "unknown")
+                    name = t.get("name", "unnamed")
+                    dur = t.get("duration_ms")
+                    agent = t.get("agent_name", "")
+                    ts = t.get("started_at", "")[:19]
+
+                    if status == "completed":
+                        icon = f"{GREEN}✓{RESET}"
+                    elif status == "failed":
+                        icon = f"{RED}✗{RESET}"
+                    else:
+                        icon = f"{BLUE}→{RESET}"
+
+                    dur_str = f" {DIM}({dur:.0f}ms){RESET}" if dur else ""
+                    print(f"{DIM}{ts}{RESET} {icon} {BOLD}TRACE{RESET}    {DIM}[{agent}]{RESET} {name}{dur_str}")
+
+                    if status == "failed" and t.get("error"):
+                        print(f"  {RED}error: {t['error']}{RESET}")
+
+            time.sleep(interval)
+
+    except KeyboardInterrupt:
+        print(f"\n{DIM}─── tail stopped ───{RESET}")
+
+
+def cmd_generate_token(args: argparse.Namespace) -> None:
+    """Generate a secure random token for dashboard authentication."""
+    from agentwatch.auth import generate_token
+    token = generate_token()
+    print(f"\n  🔑 Generated auth token:\n")
+    print(f"     {token}\n")
+    print(f"  Usage:")
+    print(f"     agentwatch serve --auth-token \"{token}\"")
+    print(f"     export AGENTWATCH_AUTH_TOKEN=\"{token}\"\n")
+
+
+def cmd_init_config(args: argparse.Namespace) -> None:
+    """Generate a starter agentwatch.toml config file."""
+    from pathlib import Path
+
+    path = Path(getattr(args, "output", "agentwatch.toml"))
+    if path.exists() and not getattr(args, "force", False):
+        print(f"  ⚠  {path} already exists. Use --force to overwrite.")
+        sys.exit(1)
+
+    config_content = '''# AgentWatch Configuration
+# https://github.com/agentwatch/agentwatch
+
+[agent]
+# name = "my-agent"  # Override agent name
+
+[server]
+host = "0.0.0.0"
+port = 8470
+# auth_token = ""  # Set for dashboard authentication
+# metrics = true   # Enable /metrics endpoint
+
+[retention]
+trace_days = 30
+log_days = 14
+health_days = 7
+cost_days = 90
+
+[alerts]
+# cooldown_seconds = 300
+
+# [costs.pricing]
+# "my-fine-tuned-model" = [2.0, 8.0]  # [input $/1M, output $/1M]
+'''
+    path.write_text(config_content)
+    print(f"  ✅ Created {path}")
+    print(f"     Edit it, then run: agentwatch serve")
 
 
 def cmd_version(args: argparse.Namespace) -> None:
@@ -603,10 +758,27 @@ def build_parser() -> argparse.ArgumentParser:
     db_export.add_argument("--agent", help="Filter by agent name")
     db_export.add_argument("--hours", type=int, help="Limit to last N hours")
 
+    # tail
+    p_tail = subparsers.add_parser("tail", help="Follow logs/traces in real-time")
+    p_tail.add_argument("--agent", help="Filter by agent name")
+    p_tail.add_argument("--level", help="Filter by log level")
+    p_tail.add_argument("--traces", action="store_true", help="Also show new traces")
+    p_tail.add_argument("--interval", type=float, default=2.0, help="Poll interval in seconds (default: 2)")
+
     # serve
     p_serve = subparsers.add_parser("serve", help="Start web dashboard")
     p_serve.add_argument("--host", default="0.0.0.0", help="Host to bind (default: 0.0.0.0)")
     p_serve.add_argument("--port", type=int, default=8470, help="Port (default: 8470)")
+    p_serve.add_argument("--auth-token", dest="auth_token", default=None,
+                         help="Require this token for dashboard access (or set AGENTWATCH_AUTH_TOKEN)")
+
+    # generate-token
+    subparsers.add_parser("generate-token", help="Generate a secure auth token")
+
+    # init
+    p_init = subparsers.add_parser("init", help="Generate a starter config file")
+    p_init.add_argument("--output", "-o", default="agentwatch.toml", help="Output path (default: agentwatch.toml)")
+    p_init.add_argument("--force", action="store_true", help="Overwrite existing file")
 
     # version
     subparsers.add_parser("version", help="Show version")
@@ -625,7 +797,10 @@ COMMANDS = {
     "patterns": cmd_patterns,
     "report": cmd_report,
     "db": cmd_db,
+    "tail": cmd_tail,
     "serve": cmd_serve,
+    "generate-token": cmd_generate_token,
+    "init": cmd_init_config,
     "version": cmd_version,
 }
 

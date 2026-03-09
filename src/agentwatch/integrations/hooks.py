@@ -58,7 +58,7 @@ def traced(
 
         @functools.wraps(fn)
         def wrapper(*args: Any, **kwargs: Any) -> T:
-            metadata = {}
+            metadata: dict[str, Any] = {}
             if capture_args:
                 # Capture args safely (convert to str, truncate)
                 try:

@@ -43,7 +43,7 @@ from agentwatch.models import _now, _uuid
 # ─── Pricing data (USD per 1M tokens) ────────────────────────────────────────
 # Last updated: 2026-03. Prices change — users can override with custom pricing.
 
-PROVIDER_PRICING: dict[str, dict[str, tuple[float, float]]] = {
+PROVIDER_PRICING: dict[str, tuple[float, float]] = {
     # model_name: (input_per_1M, output_per_1M)
     # Anthropic (2025-2026)
     "claude-opus-4-20250514": (15.0, 75.0),

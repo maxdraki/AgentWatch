@@ -323,8 +323,9 @@ def on_health_change(
         cooldown_seconds: Minimum seconds between re-firing.
     """
     name = f"health_{check_name or 'all'}"
+    rule_handler: Callable[[Alert], None]
     if check_name:
-        def filtered_handler(alert: Alert):
+        def filtered_handler(alert: Alert) -> None:
             if alert.metadata.get("check_name") == check_name:
                 handler(alert)
         rule_handler = filtered_handler

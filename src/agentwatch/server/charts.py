@@ -161,7 +161,7 @@ def donut_chart_svg(
         f'stroke="#30363d" stroke-width="{thickness}"/>'
     )
 
-    offset = 0
+    offset: float = 0
     for i, point in enumerate(data):
         pct = point.value / total
         dash = pct * circumference

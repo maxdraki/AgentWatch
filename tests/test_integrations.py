@@ -141,7 +141,7 @@ class TestOpenClawInstrumentation:
 
         inst.record_model_usage(model="test", input_tokens=100, output_tokens=50)
         inst.log("info", "test")
-        assert inst.run_health_checks() == {}
+        assert inst.run_health_checks() == []
 
     def test_sensitive_params_filtered(self, db_path):
         from agentwatch.integrations.openclaw import auto_instrument

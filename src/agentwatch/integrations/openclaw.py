@@ -179,7 +179,7 @@ class OpenClawInstrumentation:
             yield None
             return
 
-        metadata = {"tool": tool_name}
+        metadata: dict[str, Any] = {"tool": tool_name}
         if params:
             # Sanitise params — don't log sensitive values
             safe_params = {k: v for k, v in params.items()
@@ -237,10 +237,10 @@ class OpenClawInstrumentation:
         if self._active:
             agentwatch.health.register(name, fn)
 
-    def run_health_checks(self) -> dict[str, Any]:
+    def run_health_checks(self) -> list[Any]:
         """Run all registered health checks and return results."""
         if not self._active:
-            return {}
+            return []
         return agentwatch.health.run_all()
 
     # ─── Private helpers ─────────────────────────────────────────────────

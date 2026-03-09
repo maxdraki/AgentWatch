@@ -372,3 +372,111 @@ class TestAPIEndpoints:
         """Agents page should work with no data."""
         r = client.get("/agents")
         assert r.status_code == 200
+
+
+class TestServerAuth:
+    """Tests for dashboard authentication."""
+
+    @pytest.fixture()
+    def auth_client(self):
+        """Create a test client with authentication enabled."""
+        _reset()
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+
+        app = create_app(db_path=path, auth_token="test-secret-token")
+        client = TestClient(app)
+        init("test-agent", db_path=path)
+        yield client
+        _reset()
+        os.unlink(path)
+
+    def test_unauthenticated_dashboard_redirects(self, auth_client):
+        """Unauthenticated requests to dashboard redirect to login."""
+        r = auth_client.get("/", follow_redirects=False)
+        assert r.status_code == 302
+        assert "/login" in r.headers["location"]
+
+    def test_unauthenticated_api_returns_401(self, auth_client):
+        """Unauthenticated API requests return 401."""
+        r = auth_client.get("/api/stats")
+        assert r.status_code == 401
+        assert "Authentication required" in r.text
+
+    def test_login_page_renders(self, auth_client):
+        """Login page renders without auth."""
+        r = auth_client.get("/login")
+        assert r.status_code == 200
+        assert "Access Token" in r.text
+
+    def test_login_with_valid_token(self, auth_client):
+        """Posting valid token sets cookie and redirects."""
+        r = auth_client.post(
+            "/login",
+            data={"token": "test-secret-token", "next": "/"},
+            follow_redirects=False,
+        )
+        assert r.status_code == 302
+        assert "agentwatch_token" in r.headers.get("set-cookie", "")
+
+    def test_login_with_invalid_token(self, auth_client):
+        """Posting invalid token shows error."""
+        r = auth_client.post(
+            "/login",
+            data={"token": "wrong-token", "next": "/"},
+        )
+        assert r.status_code == 401
+        assert "Invalid token" in r.text
+
+    def test_authenticated_via_cookie(self, auth_client):
+        """Requests with valid cookie can access dashboard."""
+        r = auth_client.get(
+            "/",
+            cookies={"agentwatch_token": "test-secret-token"},
+        )
+        assert r.status_code == 200
+        assert "AgentWatch" in r.text
+
+    def test_authenticated_via_header(self, auth_client):
+        """Requests with Bearer token can access API."""
+        r = auth_client.get(
+            "/api/stats",
+            headers={"Authorization": "Bearer test-secret-token"},
+        )
+        assert r.status_code == 200
+
+    def test_authenticated_via_query_param(self, auth_client):
+        """Requests with token query param can access API."""
+        r = auth_client.get("/api/stats?token=test-secret-token")
+        assert r.status_code == 200
+
+    def test_authenticated_via_custom_header(self, auth_client):
+        """Requests with X-AgentWatch-Token header can access API."""
+        r = auth_client.get(
+            "/api/stats",
+            headers={"X-AgentWatch-Token": "test-secret-token"},
+        )
+        assert r.status_code == 200
+
+    def test_metrics_excluded_from_auth(self, auth_client):
+        """Metrics endpoint is accessible without auth."""
+        r = auth_client.get("/metrics")
+        assert r.status_code == 200
+
+    def test_health_excluded_from_auth(self, auth_client):
+        """Health endpoint is accessible without auth."""
+        r = auth_client.get("/health")
+        # /health might 404 if not defined, but shouldn't 401/302
+        assert r.status_code != 401
+        assert r.status_code != 302
+
+    def test_logout_clears_cookie(self, auth_client):
+        """Logout endpoint clears the auth cookie."""
+        r = auth_client.get("/logout", follow_redirects=False)
+        assert r.status_code == 302
+        assert "/login" in r.headers["location"]
+
+    def test_no_auth_client_works_normally(self, client):
+        """When no auth token is set, everything works without authentication."""
+        r = client.get("/")
+        assert r.status_code == 200

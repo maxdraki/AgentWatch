@@ -4,7 +4,7 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-251%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-317%20passing-brightgreen.svg)](tests/)
 [![Zero dependencies](https://img.shields.io/badge/core%20deps-zero-orange.svg)](pyproject.toml)
 
 Most observability tools assume a human is watching. AgentWatch is built for agents that **run themselves**.
@@ -49,7 +49,8 @@ AgentWatch is local-first, zero-dependency, and built specifically for agents th
 
 **Tracing**
 - Nested spans with automatic parent detection via thread-local context
-- Context manager and decorator API
+- Context manager and decorator API — sync and async (`async_trace()`)
+- Async support using `contextvars` for proper coroutine context propagation
 - Per-span events, metadata, timing
 - Waterfall visualization in the dashboard
 
@@ -78,6 +79,12 @@ AgentWatch is local-first, zero-dependency, and built specifically for agents th
 - SVG charts — zero JavaScript dependencies
 - Dark theme, mobile-friendly
 
+**Dashboard Authentication**
+- Token-based auth — query param, Bearer header, cookie, or custom header
+- Styled login page matching dashboard theme
+- Excluded paths (health, metrics) for monitoring access
+- `agentwatch serve --auth-token TOKEN` or `AGENTWATCH_AUTH_TOKEN` env var
+
 **Production Ready**
 - Prometheus `/metrics` endpoint — drop-in for Grafana
 - Grafana dashboard template (12 panels, import-ready JSON)
@@ -85,6 +92,7 @@ AgentWatch is local-first, zero-dependency, and built specifically for agents th
 - Data retention with per-type day limits
 - FastAPI auto-instrumentation middleware
 - Config files (`agentwatch.toml`) with env var overrides
+- Live log tailing (`agentwatch tail`)
 
 ---
 
@@ -172,6 +180,44 @@ agentwatch.health.register("cache", lambda: "degraded" if cache_miss_rate() > 0.
 ```bash
 agentwatch serve
 ```
+
+---
+
+## Async Tracing
+
+For asyncio-based agents, use `async_trace()` — it uses `contextvars` for proper async context propagation:
+
+```python
+import agentwatch
+from agentwatch import async_trace
+
+agentwatch.init("my-async-agent")
+
+# Async context manager
+async with async_trace("fetch-data") as span:
+    span.event("calling upstream API")
+    data = await client.get("/data")
+
+# Async decorator
+@async_trace("process-batch")
+async def process_batch(items: list):
+    results = await asyncio.gather(*[process(item) for item in items])
+    return results
+
+# Nested async traces — parent detected via contextvars
+async with async_trace("pipeline"):
+    async with async_trace("step-1"):
+        data = await fetch()
+    async with async_trace("step-2"):
+        result = await transform(data)
+
+# Bare decorator (uses function name)
+@async_trace
+async def my_task():
+    await do_work()
+```
+
+Async traces create the same spans and persist to the same storage as sync traces — dashboard, CLI, and API work identically.
 
 ---
 
@@ -399,7 +445,8 @@ agentwatch health              # Run all health checks
 agentwatch costs               # Cost summary by model
 agentwatch patterns            # Detected issues and trends
 agentwatch report              # Full status report (--hours)
-agentwatch serve               # Start dashboard (--port, --host, --metrics)
+agentwatch tail                # Follow logs in real-time (--traces, --level)
+agentwatch serve               # Start dashboard (--port, --host, --auth-token)
 
 agentwatch db info             # Database stats
 agentwatch db prune            # Remove old data (--days, --dry-run)
@@ -408,6 +455,25 @@ agentwatch db export           # Export to JSONL (-o file, --agent, --hours)
 
 # All commands support --json for machine-readable output
 ```
+
+### Dashboard Authentication
+
+Protect your dashboard with a token:
+
+```bash
+# Via CLI flag
+agentwatch serve --auth-token "my-secret-token"
+
+# Via environment variable
+export AGENTWATCH_AUTH_TOKEN="my-secret-token"
+agentwatch serve
+```
+
+When auth is enabled:
+- Dashboard pages redirect to a login screen
+- API endpoints return `401` without a valid token
+- Tokens accepted via: Bearer header, `X-AgentWatch-Token` header, `?token=` query param, or login cookie
+- `/metrics` and `/health` are excluded (so Prometheus can scrape without auth)
 
 ---
 
@@ -476,10 +542,12 @@ src/agentwatch/
 ├── patterns.py      # Pattern and trend detection
 ├── alerts.py        # Alert rules and webhooks
 ├── reports.py       # summary() and summary_data()
+├── async_tracing.py # Async trace support (contextvars)
+├── auth.py          # Dashboard authentication
 ├── retention.py     # prune(), vacuum(), db_info()
 ├── config.py        # TOML/JSON/env config loading
 ├── server/          # FastAPI dashboard and API
-├── cli/             # Click CLI commands
+├── cli/             # CLI commands (argparse)
 ├── exporters/       # Prometheus exporter, JSONL export
 └── integrations/    # OpenClaw, FastAPI, generic hooks
 ```
@@ -507,7 +575,7 @@ agentwatch.costs.set_pricing("my-model", input_per_mtok=3.0, output_per_mtok=9.0
 
 ## Contributing
 
-Issues, PRs and ideas welcome. The codebase is intentionally clean — 251 tests, typed throughout, zero magic.
+Issues, PRs and ideas welcome. The codebase is intentionally clean — 317 tests, typed throughout, zero magic.
 
 Areas most likely to benefit from contributions:
 - Additional LLM provider integrations
