@@ -260,7 +260,7 @@ def ingest_batch(
     Returns:
         Dict of counts: {"traces": N, "logs": N, "health": N, "costs": N}.
     """
-    counts = {"traces": 0, "logs": 0, "health": 0, "costs": 0, "metrics": 0}
+    counts = {"traces": 0, "logs": 0, "health": 0, "costs": 0, "metrics": 0, "model_usage": 0, "cron_runs": 0}
 
     for trace_data in data.get("traces", []):
         ingest_trace(trace_data, storage)
@@ -282,7 +282,58 @@ def ingest_batch(
         ingest_metric(metric_data, storage)
         counts["metrics"] += 1
 
+    for mu_data in data.get("model_usage", []):
+        ingest_model_usage(mu_data, storage)
+        counts["model_usage"] += 1
+
+    for cr_data in data.get("cron_runs", []):
+        ingest_cron_run(cr_data, storage)
+        counts["cron_runs"] += 1
+
     return counts
+
+
+def ingest_model_usage(data: dict[str, Any], storage: Storage) -> str:
+    """
+    Ingest a single model usage record.
+
+    Args:
+        data: Dict with keys: model, prompt_tokens, completion_tokens,
+              cost_usd, latency_ms (optional), agent_name (optional).
+        storage: Storage instance.
+
+    Returns:
+        The record ID.
+    """
+    return storage.record_model_usage(
+        model=data.get("model", "unknown"),
+        prompt_tokens=int(data.get("prompt_tokens", 0)),
+        completion_tokens=int(data.get("completion_tokens", 0)),
+        cost_usd=float(data.get("cost_usd", 0.0)),
+        latency_ms=float(data["latency_ms"]) if data.get("latency_ms") is not None else None,
+        agent_name=data.get("agent_name", "unknown"),
+    )
+
+
+def ingest_cron_run(data: dict[str, Any], storage: Storage) -> str:
+    """
+    Ingest a cron job run result.
+
+    Args:
+        data: Dict with keys: job_name, status, duration_ms (optional),
+              error (optional), agent_name (optional).
+        storage: Storage instance.
+
+    Returns:
+        The record ID.
+    """
+    return storage.record_cron_run(
+        job_name=data.get("job_name", "unknown"),
+        status=data.get("status", "unknown"),
+        duration_ms=float(data["duration_ms"]) if data.get("duration_ms") is not None else None,
+        error=data.get("error"),
+        agent_name=data.get("agent_name"),
+    )
 
 
 def _build_span(data: dict[str, Any], trace_id: str) -> Span:

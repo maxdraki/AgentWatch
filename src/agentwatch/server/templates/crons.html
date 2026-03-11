@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% set nav = "crons" %}
+
+{% block title %}Crons — AgentWatch{% endblock %}
+
+{% block content %}
+<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:24px;">
+    <h1 class="page-title" style="margin:0;">Cron Monitoring</h1>
+    <div style="font-size:12px; color:var(--text-muted);">
+        <span id="last-updated-crons">—</span>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-title">⏰ Scheduled Jobs</div>
+    {% if cron_stats %}
+    <div class="table-wrap">
+        <table id="crons-table">
+            <thead>
+                <tr>
+                    <th>Job</th>
+                    <th>Last Status</th>
+                    <th>Last Run</th>
+                    <th>Avg Duration</th>
+                    <th>Success Rate</th>
+                    <th>Total Runs</th>
+                    <th>Consec. Errors</th>
+                    <th>Last Error</th>
+                </tr>
+            </thead>
+            <tbody id="crons-tbody">
+                {% for job in cron_stats %}
+                <tr>
+                    <td style="font-weight:500; font-family:monospace; font-size:13px;">{{ job.job_name }}</td>
+                    <td>
+                        {% if job.last_status == 'ok' %}
+                        <span class="badge badge-ok">ok</span>
+                        {% elif job.last_status == 'error' %}
+                        <span class="badge badge-critical">error</span>
+                        {% else %}
+                        <span class="badge badge-warn">{{ job.last_status }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="duration">{{ job.last_run[:19] | replace("T", " ") if job.last_run else "—" }}</td>
+                    <td class="duration">
+                        {% if job.avg_duration_ms is not none %}
+                            {% if job.avg_duration_ms < 1000 %}{{ "%.0f"|format(job.avg_duration_ms) }}ms
+                            {% elif job.avg_duration_ms < 60000 %}{{ "%.1f"|format(job.avg_duration_ms / 1000) }}s
+                            {% else %}{{ "%.1f"|format(job.avg_duration_ms / 60000) }}m{% endif %}
+                        {% else %}—{% endif %}
+                    </td>
+                    <td>
+                        <span style="color: {% if job.success_rate >= 95 %}var(--green){% elif job.success_rate >= 80 %}var(--yellow){% else %}var(--red){% endif %}; font-weight:600;">
+                            {{ job.success_rate }}%
+                        </span>
+                    </td>
+                    <td>{{ job.total_runs }}</td>
+                    <td>
+                        {% if job.consecutive_errors > 0 %}
+                        <span class="badge badge-critical">{{ job.consecutive_errors }}</span>
+                        {% else %}
+                        <span style="color:var(--text-muted);">0</span>
+                        {% endif %}
+                    </td>
+                    <td style="font-size:12px; color:var(--text-muted); max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="{{ job.last_error or '' }}">
+                        {{ job.last_error or "—" }}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty" id="crons-empty">
+        <div class="empty-icon">⏰</div>
+        <div>No cron runs recorded yet.</div>
+        <div style="font-size:12px; margin-top:8px;">
+            Use <code>agentwatch.record_cron_run()</code> or POST to <code>/api/v1/ingest/cron_run</code>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+(function() {
+    let lastUpdated = Date.now();
+
+    function timeSince(ts) {
+        const s = Math.floor((Date.now() - ts) / 1000);
+        if (s < 5) return 'just now';
+        if (s < 60) return s + 's ago';
+        return Math.floor(s / 60) + 'm ago';
+    }
+
+    function durFmt(ms) {
+        if (ms === null || ms === undefined) return '—';
+        if (ms < 1000) return Math.round(ms) + 'ms';
+        if (ms < 60000) return (ms / 1000).toFixed(1) + 's';
+        return (ms / 60000).toFixed(1) + 'm';
+    }
+
+    function updateCrons() {
+        fetch('/api/cron-stats')
+            .then(r => r.json())
+            .then(data => {
+                lastUpdated = Date.now();
+
+                const tbody = document.getElementById('crons-tbody');
+                const emptyEl = document.getElementById('crons-empty');
+                const table = document.getElementById('crons-table');
+
+                if (data.length === 0) {
+                    if (table) table.style.display = 'none';
+                    if (emptyEl) emptyEl.style.display = '';
+                    return;
+                }
+
+                if (emptyEl) emptyEl.style.display = 'none';
+                if (table) table.style.display = '';
+
+                if (!tbody) return;
+                tbody.innerHTML = data.map(job => {
+                    const statusClass = job.last_status === 'ok' ? 'ok' : (job.last_status === 'error' ? 'critical' : 'warn');
+                    const srColor = job.success_rate >= 95 ? 'var(--green)' : (job.success_rate >= 80 ? 'var(--yellow)' : 'var(--red)');
+                    const lastRun = job.last_run ? job.last_run.slice(0, 19).replace('T', ' ') : '—';
+                    const consec = job.consecutive_errors > 0
+                        ? `<span class="badge badge-critical">${job.consecutive_errors}</span>`
+                        : `<span style="color:var(--text-muted);">0</span>`;
+                    const errText = job.last_error || '—';
+                    return `<tr>
+                        <td style="font-weight:500;font-family:monospace;font-size:13px;">${job.job_name}</td>
+                        <td><span class="badge badge-${statusClass}">${job.last_status}</span></td>
+                        <td class="duration">${lastRun}</td>
+                        <td class="duration">${durFmt(job.avg_duration_ms)}</td>
+                        <td><span style="color:${srColor};font-weight:600;">${job.success_rate}%</span></td>
+                        <td>${job.total_runs}</td>
+                        <td>${consec}</td>
+                        <td style="font-size:12px;color:var(--text-muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${errText}">${errText}</td>
+                    </tr>`;
+                }).join('');
+            })
+            .catch(() => {});
+    }
+
+    setInterval(() => {
+        const el = document.getElementById('last-updated-crons');
+        if (el) el.textContent = 'Updated ' + timeSince(lastUpdated);
+    }, 1000);
+
+    setInterval(updateCrons, 10000);
+})();
+</script>
+{% endblock %}

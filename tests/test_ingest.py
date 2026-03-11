@@ -284,7 +284,7 @@ class TestIngestBatch:
             ],
         }, storage)
 
-        assert counts == {"traces": 2, "logs": 3, "health": 1, "costs": 1, "metrics": 0}
+        assert counts == {"traces": 2, "logs": 3, "health": 1, "costs": 1, "metrics": 0, "model_usage": 0, "cron_runs": 0}
 
         # Verify data actually persisted
         traces = storage.get_traces(limit=10)
@@ -301,7 +301,7 @@ class TestIngestBatch:
 
     def test_empty_batch(self, storage):
         counts = ingest_batch({}, storage)
-        assert counts == {"traces": 0, "logs": 0, "health": 0, "costs": 0, "metrics": 0}
+        assert counts == {"traces": 0, "logs": 0, "health": 0, "costs": 0, "metrics": 0, "model_usage": 0, "cron_runs": 0}
 
     def test_partial_batch(self, storage):
         counts = ingest_batch({

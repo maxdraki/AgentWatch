@@ -35,6 +35,8 @@ from agentwatch import config
 from agentwatch import auth
 from agentwatch import metrics
 from agentwatch.client import AgentWatchClient
+from agentwatch.model_usage import record_model_usage
+from agentwatch.cron_monitoring import record_cron_run, cron_run
 
 __version__ = "0.1.0"
 __all__ = [
@@ -43,5 +45,7 @@ __all__ = [
     "health", "costs", "patterns", "alerts", "reports",
     "retention", "config", "auth", "metrics",
     "AgentWatchClient",
+    "record_model_usage",
+    "record_cron_run", "cron_run",
     "__version__",
 ]

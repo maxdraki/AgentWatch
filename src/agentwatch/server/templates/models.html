@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% set nav = "models" %}
+
+{% block title %}Models — AgentWatch{% endblock %}
+
+{% block content %}
+<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:24px;">
+    <h1 class="page-title" style="margin:0;">Model Usage</h1>
+    <div style="font-size:12px; color:var(--text-muted);">
+        <span id="last-updated-models">—</span>
+    </div>
+</div>
+
+<!-- Summary stats -->
+<div class="stats-grid" style="margin-bottom:24px;">
+    <div class="stat-card">
+        <div class="stat-value accent" id="stat-requests">{{ total_requests }}</div>
+        <div class="stat-label">Total Requests ({{ hours }}h)</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value purple" id="stat-tokens">{{ "{:,}".format(total_tokens) }}</div>
+        <div class="stat-label">Total Tokens</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value green" id="stat-cost">${{ "%.4f"|format(total_cost) }}</div>
+        <div class="stat-label">Total Cost</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value yellow" id="stat-models">{{ model_stats | length }}</div>
+        <div class="stat-label">Models Used</div>
+    </div>
+</div>
+
+<!-- Per-model table -->
+<div class="card">
+    <div class="card-title">🧠 Per-Model Breakdown</div>
+    {% if model_stats %}
+    <div class="table-wrap">
+        <table id="models-table">
+            <thead>
+                <tr>
+                    <th>Model</th>
+                    <th>Requests</th>
+                    <th>Prompt Tokens</th>
+                    <th>Completion Tokens</th>
+                    <th>Total Tokens</th>
+                    <th>Cost (USD)</th>
+                    <th>Avg Latency</th>
+                    <th>p50</th>
+                    <th>p95</th>
+                    <th>Cost Share</th>
+                </tr>
+            </thead>
+            <tbody id="models-tbody">
+                {% for m in model_stats %}
+                {% set pct = (m.total_cost_usd / total_cost * 100) if total_cost > 0 else 0 %}
+                <tr>
+                    <td style="font-weight:500; font-family:monospace; font-size:13px;">{{ m.model }}</td>
+                    <td>{{ m.requests }}</td>
+                    <td>{{ "{:,}".format(m.prompt_tokens) }}</td>
+                    <td>{{ "{:,}".format(m.completion_tokens) }}</td>
+                    <td>{{ "{:,}".format(m.total_tokens) }}</td>
+                    <td style="color:var(--green);">${{ "%.4f"|format(m.total_cost_usd) }}</td>
+                    <td class="duration">{% if m.avg_latency_ms %}{{ "%.0f"|format(m.avg_latency_ms) }}ms{% else %}—{% endif %}</td>
+                    <td class="duration">{% if m.p50_latency_ms %}{{ "%.0f"|format(m.p50_latency_ms) }}ms{% else %}—{% endif %}</td>
+                    <td class="duration">{% if m.p95_latency_ms %}{{ "%.0f"|format(m.p95_latency_ms) }}ms{% else %}—{% endif %}</td>
+                    <td>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <div style="background:var(--accent); height:6px; border-radius:3px; width:{{ [pct, 100]|min|int }}px; min-width:2px;"></div>
+                            <span style="font-size:12px; color:var(--text-muted);">{{ "%.1f"|format(pct) }}%</span>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty" id="models-empty">
+        <div class="empty-icon">🧠</div>
+        <div>No model usage recorded in the last {{ hours }}h.</div>
+        <div style="font-size:12px; margin-top:8px;">
+            Use the LiteLLM callback or POST to <code>/api/v1/ingest/model_usage</code>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+(function() {
+    let lastUpdated = Date.now();
+
+    function timeSince(ts) {
+        const s = Math.floor((Date.now() - ts) / 1000);
+        if (s < 5) return 'just now';
+        if (s < 60) return s + 's ago';
+        return Math.floor(s / 60) + 'm ago';
+    }
+
+    function fmtNum(n) {
+        return Number(n).toLocaleString();
+    }
+
+    function fmtLatency(ms) {
+        if (ms === null || ms === undefined) return '—';
+        return Math.round(ms) + 'ms';
+    }
+
+    function updateModels() {
+        fetch('/api/model-stats?hours={{ hours }}')
+            .then(r => r.json())
+            .then(data => {
+                lastUpdated = Date.now();
+
+                // Update summary stats
+                const totalReq = data.reduce((a, m) => a + m.requests, 0);
+                const totalTok = data.reduce((a, m) => a + m.total_tokens, 0);
+                const totalCost = data.reduce((a, m) => a + m.total_cost_usd, 0);
+
+                const reqEl = document.getElementById('stat-requests');
+                const tokEl = document.getElementById('stat-tokens');
+                const costEl = document.getElementById('stat-cost');
+                const modEl = document.getElementById('stat-models');
+
+                if (reqEl) reqEl.textContent = totalReq;
+                if (tokEl) tokEl.textContent = fmtNum(totalTok);
+                if (costEl) costEl.textContent = '$' + totalCost.toFixed(4);
+                if (modEl) modEl.textContent = data.length;
+
+                // Rebuild table body
+                const tbody = document.getElementById('models-tbody');
+                const emptyEl = document.getElementById('models-empty');
+                const table = document.getElementById('models-table');
+
+                if (data.length === 0) {
+                    if (table) table.style.display = 'none';
+                    if (emptyEl) emptyEl.style.display = '';
+                    return;
+                }
+
+                if (emptyEl) emptyEl.style.display = 'none';
+                if (table) table.style.display = '';
+
+                if (!tbody) return;
+                tbody.innerHTML = data.map(m => {
+                    const pct = totalCost > 0 ? (m.total_cost_usd / totalCost * 100) : 0;
+                    const barW = Math.max(2, Math.min(100, Math.round(pct)));
+                    return `<tr>
+                        <td style="font-weight:500;font-family:monospace;font-size:13px;">${m.model}</td>
+                        <td>${m.requests}</td>
+                        <td>${fmtNum(m.prompt_tokens)}</td>
+                        <td>${fmtNum(m.completion_tokens)}</td>
+                        <td>${fmtNum(m.total_tokens)}</td>
+                        <td style="color:var(--green);">$${m.total_cost_usd.toFixed(4)}</td>
+                        <td class="duration">${fmtLatency(m.avg_latency_ms)}</td>
+                        <td class="duration">${fmtLatency(m.p50_latency_ms)}</td>
+                        <td class="duration">${fmtLatency(m.p95_latency_ms)}</td>
+                        <td>
+                            <div style="display:flex;align-items:center;gap:8px;">
+                                <div style="background:var(--accent);height:6px;border-radius:3px;width:${barW}px;min-width:2px;"></div>
+                                <span style="font-size:12px;color:var(--text-muted);">${pct.toFixed(1)}%</span>
+                            </div>
+                        </td>
+                    </tr>`;
+                }).join('');
+            })
+            .catch(() => {});
+    }
+
+    // Update "last updated" text every second
+    setInterval(() => {
+        const el = document.getElementById('last-updated-models');
+        if (el) el.textContent = 'Updated ' + timeSince(lastUpdated);
+    }, 1000);
+
+    // Refresh data every 10 seconds
+    setInterval(updateModels, 10000);
+})();
+</script>
+{% endblock %}

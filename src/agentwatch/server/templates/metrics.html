@@ -121,4 +121,26 @@ stats = summary("queue_depth", hours=1)</pre>
     </div>
 </div>
 {% endif %}
+
+<div style="text-align:right; font-size:11px; color:var(--text-muted); margin-top:8px;" id="metrics-last-updated"></div>
+<script>
+(function() {
+    let lastUpdated = Date.now();
+    function timeSince(ts) {
+        const s = Math.floor((Date.now() - ts) / 1000);
+        if (s < 5) return 'just now';
+        if (s < 60) return s + 's ago';
+        return Math.floor(s / 60) + 'm ago';
+    }
+    setInterval(() => {
+        const el = document.getElementById('metrics-last-updated');
+        if (el) el.textContent = 'Last updated ' + timeSince(lastUpdated);
+    }, 1000);
+    setInterval(() => {
+        fetch('/api/metrics/list').then(r => r.json()).then(() => {
+            lastUpdated = Date.now();
+        }).catch(() => {});
+    }, 10000);
+})();
+</script>
 {% endblock %}

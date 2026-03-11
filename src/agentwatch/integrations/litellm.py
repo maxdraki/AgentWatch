@@ -190,6 +190,17 @@ class AgentWatchCallback:
                 metadata={"provider": _extract_provider(kwargs)},
             )
 
+        # Record in the dedicated model_usage table for the Models dashboard tab
+        if self.record_costs:
+            from agentwatch.model_usage import record_model_usage
+            record_model_usage(
+                model=custom_model,
+                prompt_tokens=input_tokens,
+                completion_tokens=output_tokens,
+                cost_usd=response_cost or 0.0,
+                latency_ms=duration_ms,
+            )
+
         # Update stats
         self._call_count += 1
         self._total_tokens += input_tokens + output_tokens

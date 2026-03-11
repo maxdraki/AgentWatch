@@ -12,7 +12,7 @@ import os
 import sqlite3
 import threading
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Generator
 
@@ -135,7 +135,46 @@ CREATE INDEX IF NOT EXISTS idx_metrics_agent ON metrics(agent_name);
 CREATE INDEX IF NOT EXISTS idx_metrics_name ON metrics(name);
 CREATE INDEX IF NOT EXISTS idx_metrics_timestamp ON metrics(timestamp);
 CREATE INDEX IF NOT EXISTS idx_metrics_name_agent ON metrics(name, agent_name);
+
+CREATE TABLE IF NOT EXISTS model_usage (
+    id TEXT PRIMARY KEY,
+    agent_name TEXT NOT NULL,
+    model TEXT NOT NULL,
+    prompt_tokens INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    cost_usd REAL NOT NULL DEFAULT 0,
+    latency_ms REAL,
+    timestamp TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_model_usage_agent ON model_usage(agent_name);
+CREATE INDEX IF NOT EXISTS idx_model_usage_model ON model_usage(model);
+CREATE INDEX IF NOT EXISTS idx_model_usage_timestamp ON model_usage(timestamp);
+
+CREATE TABLE IF NOT EXISTS cron_runs (
+    id TEXT PRIMARY KEY,
+    agent_name TEXT,
+    job_name TEXT NOT NULL,
+    status TEXT NOT NULL,
+    duration_ms REAL,
+    error TEXT,
+    timestamp TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_cron_runs_job ON cron_runs(job_name);
+CREATE INDEX IF NOT EXISTS idx_cron_runs_timestamp ON cron_runs(timestamp);
+CREATE INDEX IF NOT EXISTS idx_cron_runs_status ON cron_runs(status);
 """
+
+
+def _percentile(values: list[float], pct: int) -> float | None:
+    """Compute a percentile from a sorted list of floats."""
+    if not values:
+        return None
+    k = (len(values) - 1) * pct / 100
+    f = int(k)
+    c = min(f + 1, len(values) - 1)
+    return round(values[f] + (values[c] - values[f]) * (k - f), 1)
 
 
 class Storage:
@@ -795,4 +834,170 @@ class Storage:
                     ORDER BY name""",
                 ).fetchall()
 
+            return [dict(r) for r in rows]
+
+    # ─── Model Usage ─────────────────────────────────────────────────────────
+
+    def record_model_usage(
+        self,
+        model: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        cost_usd: float,
+        latency_ms: float | None = None,
+        agent_name: str = "unknown",
+    ) -> str:
+        """Record a single model invocation with token counts and cost."""
+        import uuid
+        record_id = uuid.uuid4().hex[:16]
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO model_usage
+                   (id, agent_name, model, prompt_tokens, completion_tokens, cost_usd, latency_ms, timestamp)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    record_id,
+                    agent_name,
+                    model,
+                    prompt_tokens,
+                    completion_tokens,
+                    cost_usd,
+                    latency_ms,
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+        return record_id
+
+    def get_model_stats(self, hours: int = 24) -> list[dict[str, Any]]:
+        """Return per-model aggregate stats for the given time window.
+
+        Each row: model, requests, prompt_tokens, completion_tokens,
+        total_tokens, total_cost_usd, avg_latency_ms, p50_latency_ms,
+        p95_latency_ms.
+        """
+        with self._connect() as conn:
+            cutoff = (
+                datetime.now(timezone.utc) - timedelta(hours=hours)
+            ).isoformat()
+
+            rows = conn.execute(
+                """SELECT model,
+                          COUNT(*) AS requests,
+                          COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                          COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                          COALESCE(SUM(prompt_tokens + completion_tokens), 0) AS total_tokens,
+                          COALESCE(SUM(cost_usd), 0) AS total_cost_usd,
+                          COALESCE(AVG(latency_ms), 0) AS avg_latency_ms
+                   FROM model_usage
+                   WHERE timestamp >= ?
+                   GROUP BY model
+                   ORDER BY total_cost_usd DESC""",
+                (cutoff,),
+            ).fetchall()
+
+            results = []
+            for row in rows:
+                r = dict(row)
+                latencies = [
+                    lr[0]
+                    for lr in conn.execute(
+                        "SELECT latency_ms FROM model_usage WHERE model = ? AND timestamp >= ? AND latency_ms IS NOT NULL ORDER BY latency_ms",
+                        (r["model"], cutoff),
+                    ).fetchall()
+                ]
+                r["p50_latency_ms"] = _percentile(latencies, 50)
+                r["p95_latency_ms"] = _percentile(latencies, 95)
+                r["total_cost_usd"] = round(r["total_cost_usd"], 6)
+                r["avg_latency_ms"] = round(r["avg_latency_ms"], 1) if r["avg_latency_ms"] else None
+                results.append(r)
+            return results
+
+    # ─── Cron Runs ───────────────────────────────────────────────────────────
+
+    def record_cron_run(
+        self,
+        job_name: str,
+        status: str,
+        duration_ms: float | None = None,
+        error: str | None = None,
+        agent_name: str | None = None,
+    ) -> str:
+        """Record a cron job execution result."""
+        import uuid
+        record_id = uuid.uuid4().hex[:16]
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO cron_runs
+                   (id, agent_name, job_name, status, duration_ms, error, timestamp)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    record_id,
+                    agent_name,
+                    job_name,
+                    status,
+                    duration_ms,
+                    error,
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+        return record_id
+
+    def get_cron_stats(self) -> list[dict[str, Any]]:
+        """Return per-job stats: last run status, success rate, consecutive errors, avg duration."""
+        with self._connect() as conn:
+            jobs = [
+                r[0]
+                for r in conn.execute(
+                    "SELECT DISTINCT job_name FROM cron_runs ORDER BY job_name"
+                ).fetchall()
+            ]
+
+            results = []
+            for job in jobs:
+                rows = conn.execute(
+                    """SELECT status, duration_ms, timestamp, error
+                       FROM cron_runs WHERE job_name = ?
+                       ORDER BY timestamp DESC LIMIT 100""",
+                    (job,),
+                ).fetchall()
+
+                if not rows:
+                    continue
+
+                total = len(rows)
+                ok_count = sum(1 for r in rows if r[0] == "ok")
+                success_rate = round(ok_count / total * 100, 1) if total else 0
+
+                consec_errors = 0
+                for r in rows:
+                    if r[0] != "ok":
+                        consec_errors += 1
+                    else:
+                        break
+
+                durations = [r[1] for r in rows if r[1] is not None]
+                avg_dur = round(sum(durations) / len(durations), 1) if durations else None
+
+                last = dict(rows[0])
+                results.append({
+                    "job_name": job,
+                    "last_status": last["status"],
+                    "last_run": last["timestamp"],
+                    "last_error": last["error"],
+                    "success_rate": success_rate,
+                    "total_runs": total,
+                    "consecutive_errors": consec_errors,
+                    "avg_duration_ms": avg_dur,
+                })
+
+            return results
+
+    def get_cron_history(self, job_name: str, limit: int = 50) -> list[dict[str, Any]]:
+        """Get recent run history for a specific cron job."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT * FROM cron_runs WHERE job_name = ?
+                   ORDER BY timestamp DESC LIMIT ?""",
+                (job_name, limit),
+            ).fetchall()
             return [dict(r) for r in rows]

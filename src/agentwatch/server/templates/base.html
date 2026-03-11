@@ -350,6 +350,12 @@
             <a href="/agents" class="nav-item {% if nav == 'agents' %}active{% endif %}">
                 <span class="nav-icon">🤖</span> Agents
             </a>
+            <a href="/models" class="nav-item {% if nav == 'models' %}active{% endif %}">
+                <span class="nav-icon">🧠</span> Models
+            </a>
+            <a href="/crons" class="nav-item {% if nav == 'crons' %}active{% endif %}">
+                <span class="nav-icon">⏰</span> Crons
+            </a>
         </nav>
         <main class="main">
             {% block content %}{% endblock %}

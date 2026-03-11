@@ -503,6 +503,29 @@ def create_app(
             "total_error_rate": total_error_rate,
         })
 
+    @app.get("/models", response_class=HTMLResponse)
+    async def models_page(request: Request, hours: int = 24):
+        """Model usage dashboard."""
+        model_stats = storage.get_model_stats(hours=hours)
+        total_cost = sum(m["total_cost_usd"] for m in model_stats)
+        total_requests = sum(m["requests"] for m in model_stats)
+        total_tokens = sum(m["total_tokens"] for m in model_stats)
+        return templates.TemplateResponse(request, "models.html", context={
+            "model_stats": model_stats,
+            "total_cost": round(total_cost, 6),
+            "total_requests": total_requests,
+            "total_tokens": total_tokens,
+            "hours": hours,
+        })
+
+    @app.get("/crons", response_class=HTMLResponse)
+    async def crons_page(request: Request):
+        """Cron job monitoring dashboard."""
+        cron_stats = storage.get_cron_stats()
+        return templates.TemplateResponse(request, "crons.html", context={
+            "cron_stats": cron_stats,
+        })
+
     @app.get("/patterns", response_class=HTMLResponse)
     async def patterns_page(request: Request):
         """Patterns and trends page."""
@@ -784,6 +807,38 @@ def create_app(
         total = sum(counts.values())
         return {"status": "ok", "ingested": total, "counts": counts}
 
+    @app.post("/api/v1/ingest/model_usage")
+    async def ingest_model_usage_endpoint(request: Request) -> dict:
+        """
+        Ingest model usage records from any LLM integration.
+
+        Accepts single record or array. Each record:
+            {"model": "...", "prompt_tokens": N, "completion_tokens": N,
+             "cost_usd": N, "latency_ms": N, "agent_name": "..."}
+        """
+        from agentwatch.ingest import ingest_model_usage
+
+        body = await request.json()
+        items = body if isinstance(body, list) else [body]
+        ids = [ingest_model_usage(item, storage) for item in items]
+        return {"status": "ok", "ingested": len(ids), "ids": ids}
+
+    @app.post("/api/v1/ingest/cron_run")
+    async def ingest_cron_run_endpoint(request: Request) -> dict:
+        """
+        Ingest cron job run results from any scheduler.
+
+        Accepts single record or array. Each record:
+            {"job_name": "...", "status": "ok|error|timeout",
+             "duration_ms": N, "error": "...", "agent_name": "..."}
+        """
+        from agentwatch.ingest import ingest_cron_run
+
+        body = await request.json()
+        items = body if isinstance(body, list) else [body]
+        ids = [ingest_cron_run(item, storage) for item in items]
+        return {"status": "ok", "ingested": len(ids), "ids": ids}
+
     # ─── Metrics API ─────────────────────────────────────────────────────
 
     @app.get("/api/metrics")
@@ -818,6 +873,28 @@ def create_app(
             agent_name=agent,
             hours=hours,
         )
+
+    # ─── Model Usage API ─────────────────────────────────────────────────
+
+    @app.get("/api/model-stats")
+    async def api_model_stats(hours: int = Query(24, ge=1, le=720)) -> list[dict]:
+        """Get per-model usage statistics."""
+        return storage.get_model_stats(hours=hours)
+
+    # ─── Cron Monitoring API ─────────────────────────────────────────────
+
+    @app.get("/api/cron-stats")
+    async def api_cron_stats() -> list[dict]:
+        """Get cron job run statistics."""
+        return storage.get_cron_stats()
+
+    @app.get("/api/cron-history/{job_name}")
+    async def api_cron_history(
+        job_name: str,
+        limit: int = Query(50, ge=1, le=200),
+    ) -> list[dict]:
+        """Get run history for a specific cron job."""
+        return storage.get_cron_history(job_name, limit=limit)
 
     @app.get("/api/patterns")
     async def api_patterns(

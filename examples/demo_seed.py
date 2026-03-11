@@ -21,8 +21,9 @@ import agentwatch
 from agentwatch.costs import record as record_cost
 from agentwatch.models import HealthStatus
 
-# Initialise
-agentwatch.init("demo-agent")
+# Initialise — respect AGENTWATCH_DB env var for test isolation
+_db_path = os.environ.get("AGENTWATCH_DB")
+agentwatch.init("demo-agent", db_path=_db_path)
 
 print("🌱 Seeding demo data...\n")
 
@@ -202,6 +203,57 @@ for _ in range(15):
 agentwatch.metric("error_count", random.randint(1, 10), kind="counter")
 
 print(f"  ✅ Created ~60 metric data points")
+
+# ─── Model Usage ─────────────────────────────────────────────────────────
+
+print("  🤖 Creating model usage records...")
+
+from agentwatch.model_usage import record_model_usage
+
+MODELS_DEMO = [
+    ("claude-sonnet-4-20250514", 500, 2000, 150, 600),
+    ("gpt-4o", 400, 1500, 100, 400),
+    ("gpt-4o-mini", 800, 3000, 200, 800),
+    ("gemini-2.5-flash", 600, 2500, 200, 700),
+]
+
+for _ in range(25):
+    model, min_in, max_in, min_out, max_out = random.choice(MODELS_DEMO)
+    record_model_usage(
+        model=model,
+        prompt_tokens=random.randint(min_in, max_in),
+        completion_tokens=random.randint(min_out, max_out),
+        cost_usd=round(random.uniform(0.001, 0.05), 4),
+        latency_ms=round(random.uniform(200, 3000), 1),
+    )
+
+print(f"  ✅ Created 25 model usage records")
+
+# ─── Cron Runs ───────────────────────────────────────────────────────────
+
+print("  ⏰ Creating cron run records...")
+
+from agentwatch.cron_monitoring import record_cron_run as _record_cron_run
+
+CRON_JOBS_DEMO = [
+    ("morning-briefing", 0.05),
+    ("sync-calendar", 0.10),
+    ("fetch-prices", 0.15),
+    ("health-monitor", 0.02),
+    ("cleanup-old-data", 0.03),
+]
+
+for _ in range(40):
+    job_name, fail_rate = random.choice(CRON_JOBS_DEMO)
+    failed = random.random() < fail_rate
+    _record_cron_run(
+        job_name=job_name,
+        status="error" if failed else "ok",
+        duration_ms=round(random.uniform(100, 5000), 1),
+        error="Connection timeout" if failed else None,
+    )
+
+print(f"  ✅ Created 40 cron run records")
 
 # ─── Done ────────────────────────────────────────────────────────────────
 
