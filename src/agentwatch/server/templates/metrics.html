@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% set nav = "metrics" %}
+
+{% block title %}Metrics — AgentWatch{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Custom Metrics</h1>
+
+{% if metrics %}
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-value accent">{{ metrics | length }}</div>
+        <div class="stat-label">Active Metrics</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ metrics | map(attribute='count') | sum }}</div>
+        <div class="stat-label">Total Data Points</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value green">{{ metrics | selectattr('kind', 'equalto', 'gauge') | list | length }}</div>
+        <div class="stat-label">Gauges</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value purple">{{ metrics | selectattr('kind', 'equalto', 'counter') | list | length }}</div>
+        <div class="stat-label">Counters</div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Kind</th>
+                    <th>Agent</th>
+                    <th>Latest</th>
+                    <th>Min</th>
+                    <th>Max</th>
+                    <th>Avg</th>
+                    <th>Points</th>
+                    <th>Trend</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for m in metrics %}
+                <tr>
+                    <td style="font-weight:500;">{{ m.name }}</td>
+                    <td>
+                        {% if m.kind == 'counter' %}
+                        <span class="badge badge-info">counter</span>
+                        {% else %}
+                        <span class="badge" style="background:rgba(188,140,255,0.15);color:var(--purple);">gauge</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ m.agent_name }}</td>
+                    <td class="duration">
+                        {% if m.latest is not none %}
+                            {% if m.latest == m.latest | int and m.latest | abs < 1000000 %}
+                                {{ m.latest | int }}
+                            {% else %}
+                                {{ "%.2f" | format(m.latest) }}
+                            {% endif %}
+                        {% else %}-{% endif %}
+                    </td>
+                    <td class="duration">
+                        {% if m.min is not none %}{{ "%.2f" | format(m.min) }}{% else %}-{% endif %}
+                    </td>
+                    <td class="duration">
+                        {% if m.max is not none %}{{ "%.2f" | format(m.max) }}{% else %}-{% endif %}
+                    </td>
+                    <td class="duration">
+                        {% if m.avg is not none %}{{ "%.2f" | format(m.avg) }}{% else %}-{% endif %}
+                    </td>
+                    <td class="duration">{{ m.count }}</td>
+                    <td>
+                        {% if m.sparkline %}
+                        {{ m.sparkline | safe }}
+                        {% else %}-{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="card" style="margin-top:24px;">
+    <div class="card-title">📖 Recording Metrics</div>
+    <div style="font-size:14px; color:var(--text-muted); line-height:1.8;">
+        <p style="margin-bottom:12px;">Track custom numeric values from your agent code:</p>
+        <pre style="background:var(--bg); padding:16px; border-radius:var(--radius); overflow-x:auto; font-size:13px; color:var(--text); margin-bottom:12px;">import agentwatch
+
+agentwatch.init("my-agent")
+
+# Record a gauge (point-in-time value)
+agentwatch.metric("queue_depth", 42)
+
+# Record with tags for filtering
+agentwatch.metric("requests", 1, tags={"method": "POST"})
+
+# Record a counter
+agentwatch.metric("errors_total", 5, kind="counter")
+
+# Query metrics
+from agentwatch.metrics import query, summary
+points = query("queue_depth", hours=24)
+stats = summary("queue_depth", hours=1)</pre>
+        <p><strong>Gauges</strong> represent point-in-time values (e.g. queue depth, memory usage).</p>
+        <p><strong>Counters</strong> represent monotonically increasing values (e.g. request count, total errors).</p>
+    </div>
+</div>
+{% else %}
+<div class="card">
+    <div class="empty">
+        <div class="empty-icon">📈</div>
+        <div>No custom metrics recorded yet.</div>
+        <div style="margin-top:12px; font-size:13px;">
+            Use <code style="background:var(--bg); padding:2px 6px; border-radius:4px;">agentwatch.metric("name", value)</code> to start tracking.
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,62 @@
+# AgentWatch Dashboard — Docker Compose
+#
+# Start:   docker compose up -d
+# Stop:    docker compose down
+# Logs:    docker compose logs -f
+#
+# Dashboard:  http://localhost:8470
+# Metrics:    http://localhost:8470/metrics (for Prometheus)
+
+services:
+  agentwatch:
+    build: .
+    image: agentwatch:latest
+    container_name: agentwatch
+    ports:
+      - "8470:8470"
+    volumes:
+      - agentwatch-data:/data
+    environment:
+      # Uncomment to enable authentication:
+      # AGENTWATCH_AUTH_TOKEN: "change-me-to-a-secure-token"
+      AGENTWATCH_DB_PATH: /data/agentwatch.db
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8470/api/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Optional: Prometheus for metrics collection
+  # Uncomment to enable:
+  #
+  # prometheus:
+  #   image: prom/prometheus:latest
+  #   container_name: agentwatch-prometheus
+  #   ports:
+  #     - "9090:9090"
+  #   volumes:
+  #     - ./examples/prometheus.yml:/etc/prometheus/prometheus.yml
+  #     - prometheus-data:/prometheus
+  #   depends_on:
+  #     - agentwatch
+  #   restart: unless-stopped
+
+  # Optional: Grafana for dashboards
+  # Uncomment to enable:
+  #
+  # grafana:
+  #   image: grafana/grafana:latest
+  #   container_name: agentwatch-grafana
+  #   ports:
+  #     - "3000:3000"
+  #   volumes:
+  #     - grafana-data:/var/lib/grafana
+  #   depends_on:
+  #     - prometheus
+  #   restart: unless-stopped
+
+volumes:
+  agentwatch-data:
+  # prometheus-data:
+  # grafana-data:

@@ -98,6 +98,7 @@ class PrometheusExporter:
         lines.extend(self._collect_log_metrics())
         lines.extend(self._collect_health_metrics())
         lines.extend(self._collect_cost_metrics())
+        lines.extend(self._collect_custom_metrics())
         lines.extend(self._collect_agent_info())
 
         # EOF marker for OpenMetrics
@@ -285,6 +286,45 @@ class PrometheusExporter:
                 ))
 
         lines.append("")
+        return lines
+
+    def _collect_custom_metrics(self) -> list[str]:
+        """Collect user-defined custom metrics."""
+        lines: list[str] = []
+        metric_list = self.storage.list_metrics()
+
+        if not metric_list:
+            return lines
+
+        # Group metrics by name
+        seen_names: set[str] = set()
+        for m in metric_list:
+            name = m["name"]
+            if name in seen_names:
+                continue
+            seen_names.add(name)
+
+            # Sanitise metric name for Prometheus (letters, digits, underscores)
+            prom_name = "agentwatch_custom_" + "".join(
+                c if c.isalnum() or c == "_" else "_" for c in name
+            )
+            kind = m.get("kind", "gauge")
+            prom_type = "counter" if kind == "counter" else "gauge"
+
+            lines.append(_help_line(prom_name, f"Custom metric: {name}"))
+            lines.append(_type_line(prom_name, prom_type))
+
+            # Get latest value per agent for this metric
+            for entry in metric_list:
+                if entry["name"] == name:
+                    lines.append(_metric_line(
+                        prom_name,
+                        entry.get("latest_value", 0),
+                        {"agent": entry["agent_name"]},
+                    ))
+
+            lines.append("")
+
         return lines
 
     def _collect_agent_info(self) -> list[str]:

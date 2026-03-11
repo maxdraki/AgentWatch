@@ -4,7 +4,7 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-317%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-471%20passing-brightgreen.svg)](tests/)
 [![Zero dependencies](https://img.shields.io/badge/core%20deps-zero-orange.svg)](pyproject.toml)
 
 Most observability tools assume a human is watching. AgentWatch is built for agents that **run themselves**.
@@ -72,11 +72,18 @@ AgentWatch is local-first, zero-dependency, and built specifically for agents th
 - Error spikes (sudden failure rate increase)
 - Slow trace detection (statistical outliers)
 
+**Custom Metrics**
+- Record gauges and counters: `agentwatch.metric("queue_depth", 42)`
+- Tag-based filtering and grouping
+- Summary statistics (min, max, avg, count, series)
+- Auto-linked to active trace context
+- Prometheus export of custom metrics
+
 **Dashboard**
-- 8 pages: Overview, Traces, Trace Detail, Logs, Health, Costs, Patterns, Agents
-- Trace search and filtering (by name, agent, status, duration, time window)
+- 9 pages: Overview, Traces, Trace Detail, Logs, Health, Costs, Metrics, Patterns, Agents
+- Full search and filtering on traces and logs (by name, agent, status, level, time window)
 - Multi-agent comparison with side-by-side stats
-- SVG charts — zero JavaScript dependencies
+- SVG sparklines on metrics dashboard
 - Dark theme, mobile-friendly
 
 **Dashboard Authentication**
@@ -175,7 +182,25 @@ agentwatch.health.register("queue", lambda: queue_depth() < 1000)
 agentwatch.health.register("cache", lambda: "degraded" if cache_miss_rate() > 0.5 else "ok")
 ```
 
-### 4. Open the dashboard
+### 4. Track custom metrics
+
+```python
+# Record a gauge (point-in-time value)
+agentwatch.metric("queue_depth", 42)
+
+# Record with tags for filtering
+agentwatch.metric("requests", 1, tags={"method": "POST", "status": "200"})
+
+# Record a counter
+agentwatch.metric("errors_total", 5, kind="counter")
+
+# Query metrics programmatically
+from agentwatch.metrics import query, summary
+points = query("queue_depth", hours=24)
+stats = summary("queue_depth", hours=1)
+```
+
+### 5. Open the dashboard
 
 ```bash
 agentwatch serve
@@ -293,6 +318,92 @@ A Grafana dashboard template (12 panels) is included at `examples/grafana_dashbo
 
 ---
 
+## Remote Agents (HTTP Client)
+
+Run agents on any machine and send traces to a central AgentWatch dashboard:
+
+```python
+from agentwatch import AgentWatchClient
+
+client = AgentWatchClient(
+    server_url="http://dashboard-host:8470",
+    agent_name="my-remote-agent",
+    auth_token="secret",  # optional
+)
+
+# Trace with nested spans
+with client.trace("process-batch") as t:
+    t.event("started processing")
+    with t.child("fetch-data") as fetch:
+        data = fetch_from_api()
+        fetch.set_metadata("count", len(data))
+    with t.child("transform") as transform:
+        results = process(data)
+
+# Logs, health, and costs
+client.log("info", "Agent started", {"version": "1.0"})
+client.health("database", status="ok", message="Connected")
+client.cost(model="gpt-4o", input_tokens=500, output_tokens=200)
+```
+
+The client uses only stdlib (`urllib`) — no extra dependencies. For high-throughput agents, enable buffering:
+
+```python
+client = AgentWatchClient(
+    server_url="http://host:8470",
+    agent_name="high-volume-agent",
+    buffer_size=50,  # Batch-send every 50 records
+)
+# ... send data ...
+client.flush()  # Send any remaining buffered records
+```
+
+### Ingestion API
+
+The server accepts data via REST endpoints (also usable from non-Python agents):
+
+```bash
+# Single trace
+curl -X POST http://localhost:8470/api/v1/ingest/traces \
+  -H "Content-Type: application/json" \
+  -d '{"name": "my-task", "agent_name": "curl-agent", "status": "completed", "duration_ms": 1500}'
+
+# Batch of mixed records
+curl -X POST http://localhost:8470/api/v1/ingest/batch \
+  -H "Content-Type: application/json" \
+  -d '{"traces": [...], "logs": [...], "health": [...], "costs": [...]}'
+```
+
+Endpoints: `/api/v1/ingest/traces`, `/api/v1/ingest/logs`, `/api/v1/ingest/health`, `/api/v1/ingest/costs`, `/api/v1/ingest/batch`.
+
+---
+
+## Docker
+
+Run the dashboard in Docker with persistent storage:
+
+```bash
+# Quick start
+docker run -p 8470:8470 -v agentwatch-data:/data agentwatch
+
+# With authentication
+docker run -p 8470:8470 -v agentwatch-data:/data \
+  -e AGENTWATCH_AUTH_TOKEN=my-secret agentwatch
+
+# Using docker-compose
+docker compose up -d
+```
+
+Build from source:
+
+```bash
+docker build -t agentwatch .
+```
+
+The image includes a health check and runs as a non-root user.
+
+---
+
 ## Multi-Agent Support
 
 Run multiple agents, each writing to the same DB — AgentWatch tracks them separately.
@@ -330,6 +441,53 @@ with inst.session("handle-message") as span:
     )
 ```
 
+### Auto-instrument LangChain
+
+```python
+from agentwatch.integrations.langchain import AgentWatchHandler
+
+handler = AgentWatchHandler()
+
+# Pass to any LangChain component
+llm = ChatOpenAI(callbacks=[handler])
+chain = prompt | llm
+result = chain.invoke({"input": "hello"}, config={"callbacks": [handler]})
+
+# Or install globally
+from agentwatch.integrations.langchain import auto_instrument
+auto_instrument()  # All LLM/chain/tool/retriever calls are now traced
+
+# Check stats
+print(handler.stats)  # {"calls": 5, "total_tokens": 12000, "total_cost_usd": 0.23}
+```
+
+The handler captures LLM calls, chain runs, tool invocations, and retriever queries with full token usage and cost tracking.
+
+### Auto-instrument CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from agentwatch.integrations.crewai import instrument_crew
+
+crew = Crew(agents=[...], tasks=[...])
+crew = instrument_crew(crew, crew_name="research-crew")
+result = crew.kickoff()  # Automatically traced
+
+# Or use callbacks directly for more control
+from agentwatch.integrations.crewai import AgentWatchCrewCallbacks
+
+callbacks = AgentWatchCrewCallbacks()
+crew = Crew(
+    agents=[...],
+    tasks=[...],
+    step_callback=callbacks.on_step,
+    task_callback=callbacks.on_task_complete,
+)
+
+with callbacks.trace_crew("my-crew"):
+    result = crew.kickoff()
+```
+
 ### Auto-instrument FastAPI
 
 ```python
@@ -340,6 +498,35 @@ app = FastAPI()
 app.add_middleware(AgentWatchMiddleware)
 
 # Every request is now traced automatically
+```
+
+### Auto-instrument LiteLLM
+
+```python
+import litellm
+from agentwatch.integrations.litellm import auto_instrument
+
+auto_instrument()
+
+# All LiteLLM calls are now automatically traced with costs
+response = litellm.completion(
+    model="claude-sonnet-4-20250514",
+    messages=[{"role": "user", "content": "Hello"}],
+)
+```
+
+Or use the callback directly for more control:
+
+```python
+from agentwatch.integrations.litellm import AgentWatchCallback
+
+callback = AgentWatchCallback(
+    capture_messages=True,  # Log input/output (default: False for privacy)
+)
+litellm.callbacks = [callback]
+
+# Check stats
+print(callback.stats)  # {"calls": 10, "total_tokens": 5000, ...}
 ```
 
 ### Generic function tracing
@@ -364,6 +551,35 @@ results = track_batch("process-batch", items, process_one)
 # Trace each retry attempt
 result = with_retry("flaky-api-call", call_api, max_retries=3)
 ```
+
+---
+
+## OpenTelemetry Export (OTLP)
+
+Forward AgentWatch traces to any OpenTelemetry-compatible backend (Jaeger, Grafana Tempo, Honeycomb, Datadog, etc.):
+
+```python
+from agentwatch.exporters.otlp import OTLPExporter
+from agentwatch.storage import Storage
+
+storage = Storage()
+exporter = OTLPExporter(
+    endpoint="http://localhost:4318/v1/traces",
+    service_name="my-agent",
+    headers={"Authorization": "Bearer api-key"},  # Optional
+)
+
+# Export recent traces
+exported = exporter.export_recent(storage, hours=1)
+print(f"Exported {exported} traces")
+
+# Or run as a background thread (auto-exports new traces)
+exporter.start_background(storage, interval_seconds=30)
+# ... agent runs ...
+exporter.stop_background()
+```
+
+No dependency on the OpenTelemetry SDK — AgentWatch builds OTLP/HTTP JSON payloads directly using stdlib.
 
 ---
 
@@ -440,9 +656,10 @@ AGENTWATCH_METRICS=true
 agentwatch status              # Agent stats overview
 agentwatch traces              # Recent traces (--search, --hours, --min-duration)
 agentwatch trace <id>          # Trace detail with spans
-agentwatch logs                # Recent logs (--level, --hours)
+agentwatch logs                # Recent logs (--level, --search, --hours)
 agentwatch health              # Run all health checks
 agentwatch costs               # Cost summary by model
+agentwatch metrics             # Custom metrics (--name, --agent)
 agentwatch patterns            # Detected issues and trends
 agentwatch report              # Full status report (--hours)
 agentwatch tail                # Follow logs in real-time (--traces, --level)
@@ -545,11 +762,12 @@ src/agentwatch/
 ├── async_tracing.py # Async trace support (contextvars)
 ├── auth.py          # Dashboard authentication
 ├── retention.py     # prune(), vacuum(), db_info()
+├── metrics.py       # Custom metrics (gauge/counter)
 ├── config.py        # TOML/JSON/env config loading
 ├── server/          # FastAPI dashboard and API
 ├── cli/             # CLI commands (argparse)
-├── exporters/       # Prometheus exporter, JSONL export
-└── integrations/    # OpenClaw, FastAPI, generic hooks
+├── exporters/       # Prometheus, OTLP, JSONL
+└── integrations/    # LangChain, CrewAI, FastAPI, LiteLLM, OpenClaw
 ```
 
 ---
@@ -575,7 +793,7 @@ agentwatch.costs.set_pricing("my-model", input_per_mtok=3.0, output_per_mtok=9.0
 
 ## Contributing
 
-Issues, PRs and ideas welcome. The codebase is intentionally clean — 317 tests, typed throughout, zero magic.
+Issues, PRs and ideas welcome. The codebase is intentionally clean — 466 tests, typed throughout, zero magic.
 
 Areas most likely to benefit from contributions:
 - Additional LLM provider integrations

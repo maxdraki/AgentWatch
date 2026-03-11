@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **HTTP ingestion API** — POST endpoints (`/api/v1/ingest/traces`, `/logs`, `/health`, `/costs`, `/batch`) for receiving data from remote agents
+- **Remote client** (`AgentWatchClient`) — lightweight HTTP client for sending traces, logs, health, and costs to a central server; supports buffered mode, nested child spans, auth tokens; zero external dependencies (stdlib only)
+- **OpenTelemetry OTLP export** — forward traces to any OTLP/HTTP-compatible backend (Jaeger, Tempo, Honeycomb, Datadog); background export thread; no OTel SDK dependency
+- **LiteLLM callback integration** — auto-instrument all LiteLLM calls with tracing and cost tracking; supports sync/async, error handling, optional message capture
+- **Docker support** — multi-stage Dockerfile, docker-compose.yml with optional Prometheus/Grafana, health check, non-root user
+- **Prometheus example config** — `examples/prometheus.yml` for docker-compose
+- **Remote agent example** — `examples/remote_agent_example.py` demonstrating multi-machine setup
+
 ## [0.1.0] - 2026-03-09
 
 ### Added

@@ -1,0 +1,13 @@
+# Prometheus scrape config for AgentWatch
+# Use with docker-compose (uncomment the prometheus service)
+
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+scrape_configs:
+  - job_name: agentwatch
+    static_configs:
+      - targets: ['agentwatch:8470']
+    metrics_path: /metrics
+    scrape_interval: 30s

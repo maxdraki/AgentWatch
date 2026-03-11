@@ -235,6 +235,73 @@ class TestAlertManager:
         assert "$5.0000" in alert.message
 
 
+    def test_check_metric_above(self, db_path):
+        init("metric-alert-test", db_path=db_path)
+        from agentwatch.metrics import MetricPoint
+        agent = get_agent()
+
+        # Seed a metric above threshold
+        point = MetricPoint(
+            agent_name="metric-alert-test",
+            name="queue_depth",
+            value=150.0,
+        )
+        agent.storage.save_metric(point)
+
+        manager = AlertManager()
+        fired = []
+        manager.add_rule(AlertRule(
+            name="queue-alert",
+            alert_type=AlertType.METRIC_THRESHOLD,
+            handler=lambda a: fired.append(a),
+            config={"metric_name": "queue_depth", "threshold": 100, "direction": "above"},
+        ))
+
+        alert = manager.check_metric("queue_depth", threshold=100, direction="above")
+        assert alert is not None
+        assert "queue_depth" in alert.title
+        assert "above" in alert.message
+
+    def test_check_metric_below(self, db_path):
+        init("metric-below-test", db_path=db_path)
+        from agentwatch.metrics import MetricPoint
+        agent = get_agent()
+
+        point = MetricPoint(
+            agent_name="metric-below-test",
+            name="cache_hit_rate",
+            value=0.3,
+        )
+        agent.storage.save_metric(point)
+
+        manager = AlertManager()
+        alert = manager.check_metric("cache_hit_rate", threshold=0.5, direction="below")
+        assert alert is not None
+        assert "below" in alert.message
+
+    def test_check_metric_no_trigger(self, db_path):
+        init("metric-ok-test", db_path=db_path)
+        from agentwatch.metrics import MetricPoint
+        agent = get_agent()
+
+        point = MetricPoint(
+            agent_name="metric-ok-test",
+            name="queue_depth",
+            value=50.0,
+        )
+        agent.storage.save_metric(point)
+
+        manager = AlertManager()
+        alert = manager.check_metric("queue_depth", threshold=100, direction="above")
+        assert alert is None
+
+    def test_check_metric_no_data(self, db_path):
+        init("metric-nodata-test", db_path=db_path)
+        manager = AlertManager()
+        alert = manager.check_metric("nonexistent_metric", threshold=10, direction="above")
+        assert alert is None
+
+
 class TestConvenienceFunctions:
     def test_fire_custom(self, db_path):
         init("fire-test", db_path=db_path)
@@ -273,3 +340,15 @@ class TestConvenienceFunctions:
 
         manager = get_manager()
         assert any(r.name.startswith("cost_") for r in manager.rules)
+
+    def test_on_metric_threshold(self, db_path):
+        init("metric-conv", db_path=db_path)
+        from agentwatch.alerts import on_metric_threshold
+        on_metric_threshold(
+            metric_name="queue_depth",
+            threshold=100,
+            direction="above",
+        )
+
+        manager = get_manager()
+        assert any(r.name.startswith("metric_queue_depth") for r in manager.rules)

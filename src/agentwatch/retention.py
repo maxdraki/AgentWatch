@@ -52,6 +52,7 @@ class PruneResult:
     logs_deleted: int = 0
     health_deleted: int = 0
     cost_deleted: int = 0
+    metrics_deleted: int = 0
 
     @property
     def total_deleted(self) -> int:
@@ -62,6 +63,7 @@ class PruneResult:
             + self.logs_deleted
             + self.health_deleted
             + self.cost_deleted
+            + self.metrics_deleted
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -72,6 +74,7 @@ class PruneResult:
             "logs_deleted": self.logs_deleted,
             "health_deleted": self.health_deleted,
             "cost_deleted": self.cost_deleted,
+            "metrics_deleted": self.metrics_deleted,
             "total_deleted": self.total_deleted,
         }
 
@@ -90,6 +93,8 @@ class PruneResult:
             parts.append(f"{self.health_deleted} health checks")
         if self.cost_deleted:
             parts.append(f"{self.cost_deleted} cost records")
+        if self.metrics_deleted:
+            parts.append(f"{self.metrics_deleted} metrics")
 
         if not parts:
             return "Nothing to prune."
@@ -128,6 +133,7 @@ def prune(
     log_days: int | None = None,
     health_days: int | None = None,
     cost_days: int | None = None,
+    metric_days: int | None = None,
     agent_name: str | None = None,
     storage: Storage | None = None,
     dry_run: bool = False,
@@ -158,6 +164,7 @@ def prune(
     l_days = log_days or default_days
     h_days = health_days or default_days
     c_days = cost_days or default_days
+    m_days = metric_days or default_days
 
     now = datetime.now(timezone.utc)
     result = PruneResult()
@@ -266,6 +273,22 @@ def prune(
             )
             result.cost_deleted = cursor.rowcount
 
+        # --- Metrics ---
+        metric_cutoff = (now - timedelta(days=m_days)).isoformat()
+
+        if dry_run:
+            row = conn.execute(
+                f"SELECT COUNT(*) FROM metrics WHERE timestamp < ?{agent_where}",
+                [metric_cutoff] + agent_params,
+            ).fetchone()
+            result.metrics_deleted = row[0]
+        else:
+            cursor = conn.execute(
+                f"DELETE FROM metrics WHERE timestamp < ?{agent_where}",
+                [metric_cutoff] + agent_params,
+            )
+            result.metrics_deleted = cursor.rowcount
+
     return result
 
 
@@ -313,7 +336,7 @@ def db_info(storage: Storage | None = None) -> DbInfo:
     info.size_mb = info.size_bytes / (1024 * 1024)
 
     with storage._connect() as conn:
-        tables = ["traces", "spans", "span_events", "logs", "health_checks", "token_usage"]
+        tables = ["traces", "spans", "span_events", "logs", "health_checks", "token_usage", "metrics"]
         for table in tables:
             try:
                 row = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
@@ -365,7 +388,7 @@ def export_jsonl(
         storage = get_agent().storage
 
     if tables is None:
-        tables = ["traces", "logs", "health", "costs"]
+        tables = ["traces", "logs", "health", "costs", "metrics"]
 
     should_close = False
     f: TextIO
@@ -449,6 +472,19 @@ def export_jsonl(
                     d = dict(row)
                     d["metadata"] = json.loads(d.get("metadata") or "{}")
                     d["_type"] = "token_usage"
+                    f.write(json.dumps(d) + "\n")
+                    count += 1
+
+            if "metrics" in tables:
+                tw = time_where.format(ts_col="timestamp")
+                rows = conn.execute(
+                    f"SELECT * FROM metrics WHERE 1=1{agent_where}{tw} ORDER BY timestamp",
+                    agent_params + time_params,
+                ).fetchall()
+                for row in rows:
+                    d = dict(row)
+                    d["tags"] = json.loads(d.get("tags") or "{}")
+                    d["_type"] = "metric"
                     f.write(json.dumps(d) + "\n")
                     count += 1
 

@@ -235,12 +235,16 @@ def create_app(
             if points:
                 status_chart = donut_chart_svg(points, size=120, thickness=16)
 
+        # Custom metrics for dashboard card
+        metric_list = storage.list_metrics()
+
         return templates.TemplateResponse(request, "dashboard.html", context={
             "stats": stats,
             "health": health,
             "traces": traces,
             "duration_sparkline": duration_sparkline,
             "status_chart": status_chart,
+            "metrics": metric_list,
         })
 
     @app.get("/traces", response_class=HTMLResponse)
@@ -294,15 +298,28 @@ def create_app(
         request: Request,
         agent: str | None = None,
         level: str | None = None,
+        search: str | None = None,
+        hours: int | None = None,
     ):
-        """Logs page."""
+        """Logs page with search, agent, level, and time filters."""
         from agentwatch.models import LogLevel
         level_filter = LogLevel(level.lower()) if level else None
-        logs = storage.get_logs(agent_name=agent, level=level_filter, limit=100)
+        logs = storage.get_logs(
+            agent_name=agent,
+            level=level_filter,
+            search=search,
+            hours=hours,
+            limit=100,
+        )
+        stats = storage.get_stats()
+        agents = stats.get("agents", [])
         return templates.TemplateResponse(request, "logs.html", context={
             "logs": logs,
             "agent_filter": agent,
             "level_filter": level,
+            "search_filter": search,
+            "hours_filter": hours,
+            "agents": agents,
         })
 
     @app.get("/costs", response_class=HTMLResponse)
@@ -335,6 +352,42 @@ def create_app(
             "timeline_svg": timeline_svg,
             "timeline_labels": timeline_labels,
             "model_chart": model_chart,
+        })
+
+    @app.get("/metrics-dashboard", response_class=HTMLResponse)
+    async def metrics_page(request: Request):
+        """Custom metrics dashboard page."""
+        from agentwatch.server.charts import sparkline_svg
+
+        metric_list = storage.list_metrics()
+
+        # Build detail data for each metric
+        metric_details = []
+        for m in metric_list:
+            name = m["name"]
+            s = storage.get_metric_summary(name, agent_name=m.get("agent_name"))
+
+            # Generate sparkline from series data
+            spark = ""
+            series = s.get("series", [])
+            if len(series) >= 2:
+                values = [p["value"] for p in series]
+                spark = sparkline_svg(values, width=140, height=28, color="#58a6ff")
+
+            metric_details.append({
+                "name": name,
+                "agent_name": m.get("agent_name", ""),
+                "kind": m.get("kind", "gauge"),
+                "count": s.get("count", 0),
+                "latest": s.get("latest_value"),
+                "min": s.get("min"),
+                "max": s.get("max"),
+                "avg": s.get("avg"),
+                "sparkline": spark,
+            })
+
+        return templates.TemplateResponse(request, "metrics.html", context={
+            "metrics": metric_details,
         })
 
     @app.get("/alerts", response_class=HTMLResponse)
@@ -553,12 +606,20 @@ def create_app(
     async def api_logs(
         agent: str | None = None,
         level: str | None = None,
+        search: str | None = None,
+        hours: int | None = None,
         limit: int = Query(100, ge=1, le=1000),
     ) -> list[dict]:
-        """List logs."""
+        """List logs with optional filters."""
         from agentwatch.models import LogLevel
         level_filter = LogLevel(level.lower()) if level else None
-        return storage.get_logs(agent_name=agent, level=level_filter, limit=limit)
+        return storage.get_logs(
+            agent_name=agent,
+            level=level_filter,
+            search=search,
+            hours=hours,
+            limit=limit,
+        )
 
     @app.get("/api/health")
     async def api_health(agent: str | None = None) -> list[dict]:
@@ -635,6 +696,128 @@ def create_app(
         from agentwatch.alerts import check_all
         alerts = check_all()
         return [a.to_dict() for a in alerts]
+
+    # ─── Ingestion API (v1) ──────────────────────────────────────────────
+
+    @app.post("/api/v1/ingest/traces")
+    async def ingest_traces_endpoint(request: Request) -> dict:
+        """
+        Ingest one or more traces from a remote agent.
+
+        Accepts:
+            {"name": "...", "agent_name": "...", ...}  — single trace
+            [{"name": "..."}, ...]                      — array of traces
+        """
+        from agentwatch.ingest import ingest_trace
+
+        body = await request.json()
+        items = body if isinstance(body, list) else [body]
+        ids = []
+        for item in items:
+            trace_id = ingest_trace(item, storage)
+            ids.append(trace_id)
+        return {"status": "ok", "ingested": len(ids), "ids": ids}
+
+    @app.post("/api/v1/ingest/logs")
+    async def ingest_logs_endpoint(request: Request) -> dict:
+        """Ingest one or more log entries from a remote agent."""
+        from agentwatch.ingest import ingest_log
+
+        body = await request.json()
+        items = body if isinstance(body, list) else [body]
+        ids = []
+        for item in items:
+            log_id = ingest_log(item, storage)
+            ids.append(log_id)
+        return {"status": "ok", "ingested": len(ids), "ids": ids}
+
+    @app.post("/api/v1/ingest/health")
+    async def ingest_health_endpoint(request: Request) -> dict:
+        """Ingest one or more health check results from a remote agent."""
+        from agentwatch.ingest import ingest_health
+
+        body = await request.json()
+        items = body if isinstance(body, list) else [body]
+        names = []
+        for item in items:
+            name = ingest_health(item, storage)
+            names.append(name)
+        return {"status": "ok", "ingested": len(names), "names": names}
+
+    @app.post("/api/v1/ingest/costs")
+    async def ingest_costs_endpoint(request: Request) -> dict:
+        """Ingest one or more token usage / cost records from a remote agent."""
+        from agentwatch.ingest import ingest_cost
+
+        body = await request.json()
+        items = body if isinstance(body, list) else [body]
+        ids = []
+        for item in items:
+            usage_id = ingest_cost(item, storage)
+            ids.append(usage_id)
+        return {"status": "ok", "ingested": len(ids), "ids": ids}
+
+    @app.post("/api/v1/ingest/metrics")
+    async def ingest_metrics_endpoint(request: Request) -> dict:
+        """Ingest one or more metric data points from a remote agent."""
+        from agentwatch.ingest import ingest_metric
+
+        body = await request.json()
+        items = body if isinstance(body, list) else [body]
+        ids = []
+        for item in items:
+            metric_id = ingest_metric(item, storage)
+            ids.append(metric_id)
+        return {"status": "ok", "ingested": len(ids), "ids": ids}
+
+    @app.post("/api/v1/ingest/batch")
+    async def ingest_batch_endpoint(request: Request) -> dict:
+        """
+        Ingest a batch of mixed records.
+
+        Accepts: {"traces": [...], "logs": [...], "health": [...], "costs": [...]}
+        """
+        from agentwatch.ingest import ingest_batch
+
+        body = await request.json()
+        counts = ingest_batch(body, storage)
+        total = sum(counts.values())
+        return {"status": "ok", "ingested": total, "counts": counts}
+
+    # ─── Metrics API ─────────────────────────────────────────────────────
+
+    @app.get("/api/metrics")
+    async def api_metrics(
+        name: str | None = None,
+        agent: str | None = None,
+        hours: int | None = None,
+        limit: int = Query(100, ge=1, le=1000),
+    ) -> list[dict]:
+        """List metric data points."""
+        return storage.get_metrics(
+            name=name,
+            agent_name=agent,
+            hours=hours,
+            limit=limit,
+        )
+
+    @app.get("/api/metrics/list")
+    async def api_metrics_list(agent: str | None = None) -> list[dict]:
+        """List all known metric names with latest values."""
+        return storage.list_metrics(agent_name=agent)
+
+    @app.get("/api/metrics/{metric_name}/summary")
+    async def api_metric_summary(
+        metric_name: str,
+        agent: str | None = None,
+        hours: int | None = None,
+    ) -> dict:
+        """Get aggregate statistics for a metric."""
+        return storage.get_metric_summary(
+            name=metric_name,
+            agent_name=agent,
+            hours=hours,
+        )
 
     @app.get("/api/patterns")
     async def api_patterns(

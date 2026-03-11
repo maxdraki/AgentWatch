@@ -170,6 +170,39 @@ for _ in range(30):
 
 print(f"  ✅ Created 30 cost records")
 
+# ─── Custom Metrics ──────────────────────────────────────────────────────
+
+print("  📈 Creating custom metrics...")
+
+import time as _time
+
+# Queue depth (gauge) — fluctuating over time
+for i in range(20):
+    depth = random.randint(0, 50) + (10 * (i % 5))
+    agentwatch.metric("queue_depth", depth)
+    _time.sleep(0.01)  # Slightly different timestamps
+
+# Request rate (counter)
+total = 0
+for i in range(15):
+    total += random.randint(1, 20)
+    agentwatch.metric("requests_total", total, kind="counter")
+    _time.sleep(0.01)
+
+# Cache hit rate (gauge with tags)
+for _ in range(10):
+    agentwatch.metric("cache_hit_rate", random.uniform(0.6, 0.99),
+                       tags={"cache": random.choice(["embeddings", "responses"])})
+
+# Latency (gauge)
+for _ in range(15):
+    agentwatch.metric("api_latency_ms", random.uniform(50, 500))
+
+# Error count (counter)
+agentwatch.metric("error_count", random.randint(1, 10), kind="counter")
+
+print(f"  ✅ Created ~60 metric data points")
+
 # ─── Done ────────────────────────────────────────────────────────────────
 
 agentwatch.shutdown()

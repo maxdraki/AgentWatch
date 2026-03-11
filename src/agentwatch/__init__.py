@@ -24,6 +24,7 @@ from agentwatch.core import init, shutdown, get_agent
 from agentwatch.tracing import trace
 from agentwatch.async_tracing import async_trace
 from agentwatch.logging import log
+from agentwatch.metrics import record as metric
 from agentwatch import health
 from agentwatch import costs
 from agentwatch import patterns
@@ -32,12 +33,15 @@ from agentwatch import reports
 from agentwatch import retention
 from agentwatch import config
 from agentwatch import auth
+from agentwatch import metrics
+from agentwatch.client import AgentWatchClient
 
 __version__ = "0.1.0"
 __all__ = [
     "init", "shutdown", "get_agent",
-    "trace", "async_trace", "log",
+    "trace", "async_trace", "log", "metric",
     "health", "costs", "patterns", "alerts", "reports",
-    "retention", "config", "auth",
+    "retention", "config", "auth", "metrics",
+    "AgentWatchClient",
     "__version__",
 ]

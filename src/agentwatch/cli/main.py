@@ -86,6 +86,8 @@ def cmd_status(args: argparse.Namespace) -> None:
     print(f"  Traces:  {stats['total_traces']}")
     print(f"  Logs:    {stats['total_logs']}")
     print(f"  Health:  {stats['total_health_checks']} checks recorded")
+    if stats.get("total_metrics", 0) > 0:
+        print(f"  Metrics: {stats['total_metrics']} data points")
 
     if stats["trace_status_breakdown"]:
         parts = []
@@ -204,6 +206,8 @@ def cmd_logs(args: argparse.Namespace) -> None:
     logs = storage.get_logs(
         agent_name=getattr(args, "agent", None),
         level=level_filter,
+        search=getattr(args, "search", None),
+        hours=getattr(args, "hours", None),
         limit=getattr(args, "limit", 50),
     )
 
@@ -676,6 +680,58 @@ cost_days = 90
     print(f"     Edit it, then run: agentwatch serve")
 
 
+def cmd_metrics(args: argparse.Namespace) -> None:
+    """Show custom metrics."""
+    storage = _get_storage(args)
+    json_out = getattr(args, "json_output", False)
+
+    name = getattr(args, "name", None)
+    agent = getattr(args, "agent", None)
+
+    if name:
+        # Show summary for a specific metric
+        summary = storage.get_metric_summary(name, agent_name=agent)
+        if json_out:
+            print(json.dumps(summary, indent=2, default=str))
+            return
+
+        print(f"\n  📈 Metric: {name}")
+        print(f"  {'─' * 40}")
+        print(f"  Count:  {summary['count']}")
+        print(f"  Latest: {summary['latest_value']}")
+        print(f"  Min:    {summary['min']}")
+        print(f"  Max:    {summary['max']}")
+        print(f"  Avg:    {summary['avg']}")
+        print(f"  Sum:    {summary['sum']}")
+        print()
+    else:
+        # List all metrics
+        metrics = storage.list_metrics(agent_name=agent)
+        if json_out:
+            print(json.dumps(metrics, indent=2, default=str))
+            return
+
+        if not metrics:
+            print("\n  No custom metrics recorded.\n")
+            return
+
+        print(f"\n  📈 Custom Metrics ({len(metrics)} total)")
+        print(f"  {'─' * 60}")
+
+        # Header
+        print(f"  {'Name':<30} {'Kind':<10} {'Latest':<12} {'Count':<8} {'Agent'}")
+        print(f"  {'─' * 30} {'─' * 10} {'─' * 12} {'─' * 8} {'─' * 15}")
+
+        for m in metrics:
+            latest = m.get("latest_value")
+            latest_str = f"{latest:.2f}" if latest is not None else "-"
+            print(
+                f"  {m['name']:<30} {m.get('kind', 'gauge'):<10} "
+                f"{latest_str:<12} {m.get('count', 0):<8} {m.get('agent_name', '')}"
+            )
+        print()
+
+
 def cmd_version(args: argparse.Namespace) -> None:
     """Show version."""
     from agentwatch import __version__
@@ -715,6 +771,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_logs = subparsers.add_parser("logs", help="Show recent logs")
     p_logs.add_argument("--agent", help="Filter by agent name")
     p_logs.add_argument("--level", help="Filter by level (debug/info/warn/error/critical)")
+    p_logs.add_argument("--search", "-s", help="Search log messages (substring match)")
+    p_logs.add_argument("--hours", type=int, help="Only show logs from last N hours")
     p_logs.add_argument("--limit", type=int, default=50, help="Max results")
 
     # health
@@ -758,6 +816,11 @@ def build_parser() -> argparse.ArgumentParser:
     db_export.add_argument("--agent", help="Filter by agent name")
     db_export.add_argument("--hours", type=int, help="Limit to last N hours")
 
+    # metrics
+    p_metrics = subparsers.add_parser("metrics", help="Show custom metrics")
+    p_metrics.add_argument("--agent", help="Filter by agent name")
+    p_metrics.add_argument("--name", "-n", help="Show summary for a specific metric")
+
     # tail
     p_tail = subparsers.add_parser("tail", help="Follow logs/traces in real-time")
     p_tail.add_argument("--agent", help="Filter by agent name")
@@ -796,6 +859,7 @@ COMMANDS = {
     "costs": cmd_costs,
     "patterns": cmd_patterns,
     "report": cmd_report,
+    "metrics": cmd_metrics,
     "db": cmd_db,
     "tail": cmd_tail,
     "serve": cmd_serve,

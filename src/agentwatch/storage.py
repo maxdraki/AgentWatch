@@ -27,6 +27,9 @@ from agentwatch.models import (
     TraceStatus,
 )
 
+# Lazy import to avoid circular dependency
+# MetricPoint is imported where needed in metric methods
+
 DEFAULT_DB_PATH = os.path.expanduser("~/.agentwatch/agentwatch.db")
 
 SCHEMA = """
@@ -115,6 +118,23 @@ CREATE INDEX IF NOT EXISTS idx_token_agent ON token_usage(agent_name);
 CREATE INDEX IF NOT EXISTS idx_token_model ON token_usage(model);
 CREATE INDEX IF NOT EXISTS idx_token_timestamp ON token_usage(timestamp);
 CREATE INDEX IF NOT EXISTS idx_token_trace ON token_usage(trace_id);
+
+CREATE TABLE IF NOT EXISTS metrics (
+    id TEXT PRIMARY KEY,
+    agent_name TEXT NOT NULL,
+    name TEXT NOT NULL,
+    value REAL NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'gauge',
+    tags TEXT DEFAULT '{}',
+    timestamp TEXT NOT NULL,
+    trace_id TEXT,
+    span_id TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_metrics_agent ON metrics(agent_name);
+CREATE INDEX IF NOT EXISTS idx_metrics_name ON metrics(name);
+CREATE INDEX IF NOT EXISTS idx_metrics_timestamp ON metrics(timestamp);
+CREATE INDEX IF NOT EXISTS idx_metrics_name_agent ON metrics(name, agent_name);
 """
 
 
@@ -131,6 +151,7 @@ class Storage:
         # Initialise schema on the creating thread
         with self._connect() as conn:
             conn.executescript(SCHEMA)
+            self._migrate(conn)
 
     @contextmanager
     def _connect(self) -> Generator[sqlite3.Connection, None, None]:
@@ -154,6 +175,18 @@ class Storage:
         if hasattr(self._local, "conn") and self._local.conn:
             self._local.conn.close()
             self._local.conn = None
+
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        """Run any schema migrations for existing databases."""
+        # Check if metrics table exists (added in v0.2.0)
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        # CREATE TABLE IF NOT EXISTS handles new tables automatically
+        # This method is for future column additions or data migrations
 
     # ─── Traces ──────────────────────────────────────────────────────────
 
@@ -328,10 +361,21 @@ class Storage:
         self,
         agent_name: str | None = None,
         level: LogLevel | None = None,
+        search: str | None = None,
+        hours: int | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
-        """Query logs with optional filters."""
+        """Query logs with optional filters.
+
+        Args:
+            agent_name: Filter by agent name.
+            level: Filter by log level.
+            search: Search log messages (case-insensitive substring match).
+            hours: Only include logs from the last N hours.
+            limit: Maximum number of results.
+            offset: Offset for pagination.
+        """
         with self._connect() as conn:
             query = "SELECT * FROM logs WHERE 1=1"
             params: list[Any] = []
@@ -342,6 +386,13 @@ class Storage:
             if level:
                 query += " AND level = ?"
                 params.append(level.value)
+            if search:
+                query += " AND message LIKE ?"
+                params.append(f"%{search}%")
+            if hours is not None:
+                cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+                query += " AND timestamp >= ?"
+                params.append(cutoff)
 
             query += " ORDER BY timestamp DESC LIMIT ? OFFSET ?"
             params.extend([limit, offset])
@@ -575,11 +626,173 @@ class Storage:
                 "SELECT DISTINCT agent_name FROM traces"
             ).fetchall()
 
+            # Metric count
+            metric_count = conn.execute(
+                f"SELECT COUNT(*) FROM metrics {where}", params
+            ).fetchone()[0]
+
             return {
                 "total_traces": trace_count,
                 "total_logs": log_count,
                 "total_health_checks": health_count,
+                "total_metrics": metric_count,
                 "trace_status_breakdown": status_breakdown,
                 "recent_error_rate_pct": round(error_rate, 1),
                 "agents": [r["agent_name"] for r in agents],
             }
+
+    # ─── Custom Metrics ──────────────────────────────────────────────────
+
+    def save_metric(self, point: Any) -> None:
+        """Insert a metric data point."""
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO metrics
+                   (id, agent_name, name, value, kind, tags, timestamp, trace_id, span_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    point.id,
+                    point.agent_name,
+                    point.name,
+                    point.value,
+                    point.kind,
+                    json.dumps(point.tags),
+                    point.timestamp.isoformat(),
+                    point.trace_id,
+                    point.span_id,
+                ),
+            )
+
+    def get_metrics(
+        self,
+        name: str | None = None,
+        agent_name: str | None = None,
+        tags: dict[str, str] | None = None,
+        hours: int | None = None,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        """Query metric data points with optional filters."""
+        with self._connect() as conn:
+            query = "SELECT * FROM metrics WHERE 1=1"
+            params: list[Any] = []
+
+            if name:
+                query += " AND name = ?"
+                params.append(name)
+            if agent_name:
+                query += " AND agent_name = ?"
+                params.append(agent_name)
+            if hours:
+                cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+                query += " AND timestamp >= ?"
+                params.append(cutoff)
+
+            query += " ORDER BY timestamp DESC LIMIT ?"
+            params.append(limit)
+
+            rows = conn.execute(query, params).fetchall()
+            results = [dict(r) for r in rows]
+            for r in results:
+                r["tags"] = json.loads(r.get("tags") or "{}")
+
+            # Post-filter by tags if requested
+            if tags:
+                filtered = []
+                for r in results:
+                    match = all(r["tags"].get(k) == v for k, v in tags.items())
+                    if match:
+                        filtered.append(r)
+                results = filtered
+
+            return results
+
+    def get_metric_summary(
+        self,
+        name: str,
+        agent_name: str | None = None,
+        tags: dict[str, str] | None = None,
+        hours: int | None = None,
+    ) -> dict[str, Any]:
+        """Get aggregate statistics for a metric."""
+        with self._connect() as conn:
+            where_parts = ["name = ?"]
+            params: list[Any] = [name]
+
+            if agent_name:
+                where_parts.append("agent_name = ?")
+                params.append(agent_name)
+            if hours:
+                cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+                where_parts.append("timestamp >= ?")
+                params.append(cutoff)
+
+            where = " AND ".join(where_parts)
+
+            row = conn.execute(
+                f"""SELECT
+                    COUNT(*) as count,
+                    MIN(value) as min_value,
+                    MAX(value) as max_value,
+                    AVG(value) as avg_value,
+                    SUM(value) as sum_value
+                FROM metrics WHERE {where}""",
+                params,
+            ).fetchone()
+
+            # Get latest value
+            latest_row = conn.execute(
+                f"SELECT value, timestamp FROM metrics WHERE {where} ORDER BY timestamp DESC LIMIT 1",
+                params,
+            ).fetchone()
+
+            # Get time series for sparkline (last 50 points)
+            series_rows = conn.execute(
+                f"SELECT value, timestamp FROM metrics WHERE {where} ORDER BY timestamp ASC LIMIT 50",
+                params,
+            ).fetchall()
+
+            result: dict[str, Any] = {
+                "name": name,
+                "count": row["count"],
+                "min": round(row["min_value"], 4) if row["min_value"] is not None else None,
+                "max": round(row["max_value"], 4) if row["max_value"] is not None else None,
+                "avg": round(row["avg_value"], 4) if row["avg_value"] is not None else None,
+                "sum": round(row["sum_value"], 4) if row["sum_value"] is not None else None,
+                "latest_value": latest_row["value"] if latest_row else None,
+                "latest_timestamp": latest_row["timestamp"] if latest_row else None,
+                "series": [{"value": r["value"], "timestamp": r["timestamp"]} for r in series_rows],
+            }
+            return result
+
+    def list_metrics(
+        self,
+        agent_name: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List all known metric names with latest values and counts."""
+        with self._connect() as conn:
+            if agent_name:
+                rows = conn.execute(
+                    """SELECT name, kind, COUNT(*) as count,
+                       (SELECT value FROM metrics m2
+                        WHERE m2.name = metrics.name AND m2.agent_name = metrics.agent_name
+                        ORDER BY timestamp DESC LIMIT 1) as latest_value,
+                       agent_name
+                    FROM metrics
+                    WHERE agent_name = ?
+                    GROUP BY name, agent_name
+                    ORDER BY name""",
+                    (agent_name,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT name, kind, COUNT(*) as count,
+                       (SELECT value FROM metrics m2
+                        WHERE m2.name = metrics.name AND m2.agent_name = metrics.agent_name
+                        ORDER BY timestamp DESC LIMIT 1) as latest_value,
+                       agent_name
+                    FROM metrics
+                    GROUP BY name, agent_name
+                    ORDER BY name""",
+                ).fetchall()
+
+            return [dict(r) for r in rows]

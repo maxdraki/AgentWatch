@@ -61,6 +61,7 @@ class AlertType(str, Enum):
     HEALTH_CHANGE = "health_change"
     ERROR_SPIKE = "error_spike"
     COST_THRESHOLD = "cost_threshold"
+    METRIC_THRESHOLD = "metric_threshold"
     PATTERN_DETECTED = "pattern_detected"
     CUSTOM = "custom"
 
@@ -262,6 +263,58 @@ class AlertManager:
 
         return None
 
+    def check_metric(
+        self,
+        metric_name: str,
+        threshold: float,
+        direction: str = "above",
+        hours: int | None = None,
+    ) -> Alert | None:
+        """
+        Check a custom metric against a threshold.
+
+        Args:
+            metric_name: Name of the metric to check.
+            threshold: Threshold value.
+            direction: "above" or "below" — when to alert.
+            hours: Optional window to check (default: latest value).
+        """
+        try:
+            from agentwatch.core import get_agent
+            agent = get_agent()
+        except RuntimeError:
+            return None
+
+        summary = agent.storage.get_metric_summary(metric_name, hours=hours)
+        latest = summary.get("latest_value")
+
+        if latest is None:
+            return None
+
+        triggered = False
+        if direction == "above" and latest > threshold:
+            triggered = True
+        elif direction == "below" and latest < threshold:
+            triggered = True
+
+        if triggered:
+            alert = Alert(
+                type=AlertType.METRIC_THRESHOLD,
+                level=AlertLevel.WARNING,
+                title=f"Metric '{metric_name}' {direction} threshold",
+                message=f"{metric_name} = {latest:.2f} ({direction} {threshold:.2f})",
+                metadata={
+                    "metric_name": metric_name,
+                    "value": latest,
+                    "threshold": threshold,
+                    "direction": direction,
+                },
+            )
+            self.fire(alert)
+            return alert
+
+        return None
+
     def run_all_checks(self) -> list[Alert]:
         """Run all configured alert checks."""
         alerts = []
@@ -280,6 +333,15 @@ class AlertManager:
                 result = self.check_costs(threshold_usd=threshold, period_hours=hours)
                 if result:
                     alerts.append(result)
+            elif rule.alert_type == AlertType.METRIC_THRESHOLD:
+                metric_name = rule.config.get("metric_name", "")
+                threshold = rule.config.get("threshold", 0)
+                direction = rule.config.get("direction", "above")
+                hours = rule.config.get("hours")
+                if metric_name:
+                    result = self.check_metric(metric_name, threshold, direction, hours)
+                    if result:
+                        alerts.append(result)
 
         return alerts
 
@@ -382,6 +444,41 @@ def on_cost_threshold(
         alert_type=AlertType.COST_THRESHOLD,
         handler=handler or _default_handler,
         config={"threshold_usd": threshold_usd, "period_hours": period_hours},
+        cooldown_seconds=cooldown_seconds,
+    ))
+
+
+def on_metric_threshold(
+    metric_name: str,
+    threshold: float,
+    direction: str = "above",
+    hours: int | None = None,
+    handler: Callable[[Alert], None] | None = None,
+    cooldown_seconds: int = 600,
+) -> None:
+    """
+    Register a handler for custom metric threshold alerts.
+
+    Args:
+        metric_name: Name of the metric to monitor.
+        threshold: Value that triggers the alert.
+        direction: "above" to alert when value exceeds threshold,
+                   "below" to alert when value drops below it.
+        hours: Optional window — check average over this period
+               instead of the latest value.
+        handler: Alert handler. Defaults to logging.
+        cooldown_seconds: Minimum seconds between re-firing.
+    """
+    _manager.add_rule(AlertRule(
+        name=f"metric_{metric_name}_{direction}_{threshold}",
+        alert_type=AlertType.METRIC_THRESHOLD,
+        handler=handler or _default_handler,
+        config={
+            "metric_name": metric_name,
+            "threshold": threshold,
+            "direction": direction,
+            "hours": hours,
+        },
         cooldown_seconds=cooldown_seconds,
     ))
 
