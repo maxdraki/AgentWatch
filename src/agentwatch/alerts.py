@@ -103,7 +103,7 @@ class AlertRule:
     config: dict[str, Any] = field(default_factory=dict)
     enabled: bool = True
     cooldown_seconds: int = 300  # Don't re-fire same alert within 5 min
-    _last_fired: float = 0.0
+    _last_fired: float = field(default=-float("inf"))  # Ensures first fire always succeeds
 
 
 class AlertManager:
