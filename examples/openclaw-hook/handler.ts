@@ -23,6 +23,11 @@ const AGENT_NAME = process.env.AGENTWATCH_AGENT_NAME || "openclaw-gateway";
 
 const MAX_CONTENT = 200;
 
+// Track open conversations: conversationId → receive timestamp (for duration)
+const pendingConversations = new Map<string, number>();
+// Auto-expire stale entries after 10 minutes
+const PENDING_TTL_MS = 10 * 60 * 1000;
+
 // ── Helpers ────────────────────────────────────────────────────────────
 
 function uuid(): string {
@@ -196,14 +201,24 @@ const handler = async (event: any) => {
         context?.metadata?.senderName || context?.from || "unknown";
       const channel = context?.channelId || "unknown";
       const isGroup = !!context?.isGroup;
+      const convId = context?.conversationId as string | undefined;
 
-      sendTrace("msg:received:" + channel, "completed", 1, {
+      // Track receive time so we can compute round-trip on the sent event
+      if (convId) {
+        pendingConversations.set(convId, Date.now());
+        // Expire stale entries
+        for (const [k, ts] of pendingConversations) {
+          if (Date.now() - ts > PENDING_TTL_MS) pendingConversations.delete(k);
+        }
+      }
+
+      sendLog("info", `Message from ${from} (${channel})`, {
         direction: "inbound",
         channel,
         from,
         isGroup,
         content: truncate(content, MAX_CONTENT),
-        conversationId: context?.conversationId,
+        conversationId: convId,
       });
 
       sendMetric("messages_received", 1, { channel });
@@ -218,27 +233,85 @@ const handler = async (event: any) => {
       const to = context?.to || "unknown";
       const channel = context?.channelId || "unknown";
       const success = context?.success !== false;
+      const convId = context?.conversationId as string | undefined;
 
-      sendTrace(
-        "msg:sent:" + channel,
-        success ? "completed" : "failed",
-        1,
-        {
-          direction: "outbound",
-          channel,
+      // Compute real round-trip duration if we have the receive timestamp
+      let durationMs = 0;
+      let startedAt: string;
+      const endedAt = now();
+      const receiveTs = convId ? pendingConversations.get(convId) : undefined;
+
+      if (receiveTs) {
+        durationMs = Date.now() - receiveTs;
+        startedAt = new Date(receiveTs).toISOString();
+        pendingConversations.delete(convId!);
+      } else {
+        startedAt = endedAt;
+      }
+
+      // Build a trace with receive + sent spans for the full round-trip
+      const traceId = uuid();
+      const spans: Record<string, unknown>[] = [];
+
+      if (receiveTs) {
+        // Span covering the full conversation turn
+        spans.push({
+          id: uuid(),
+          trace_id: traceId,
+          name: "conversation:" + channel,
+          status: success ? "completed" : "failed",
+          started_at: startedAt,
+          ended_at: endedAt,
+          duration_ms: durationMs,
+          metadata: { channel, conversationId: convId },
+          events: [],
+        });
+      }
+
+      // Delivery span
+      spans.push({
+        id: uuid(),
+        trace_id: traceId,
+        parent_id: spans.length > 0 ? (spans[0] as any).id : undefined,
+        name: "deliver:" + channel,
+        status: success ? "completed" : "failed",
+        started_at: endedAt,
+        ended_at: endedAt,
+        duration_ms: 0,
+        metadata: {
           to,
           success,
           error: context?.error,
-          isGroup: !!context?.isGroup,
           content: truncate(content, MAX_CONTENT),
-          conversationId: context?.conversationId,
-        }
-      );
+        },
+        events: [],
+      });
+
+      void post("traces", {
+        id: traceId,
+        agent_name: AGENT_NAME,
+        name: "conversation:" + channel,
+        status: success ? "completed" : "failed",
+        started_at: startedAt,
+        ended_at: endedAt,
+        duration_ms: durationMs,
+        metadata: {
+          channel,
+          to,
+          isGroup: !!context?.isGroup,
+          conversationId: convId,
+        },
+        spans,
+      });
 
       sendMetric("messages_sent", 1, {
         channel,
         success: String(success),
       });
+
+      if (durationMs > 0) {
+        sendMetric("response_time_ms", durationMs, { channel });
+      }
 
       if (!success && context?.error) {
         sendLog("error", "Message delivery failed: " + context.error, {

@@ -54,13 +54,19 @@ Then enable in `openclaw.json`:
 
 Restart the gateway to load the hook.
 
+## How it works
+
+The hook correlates `message:received` and `message:sent` events by conversation ID to compute **real round-trip duration** — the time from when a message arrives to when the reply is delivered. Each conversation turn becomes a trace with nested spans (conversation + delivery), giving you a waterfall view in the dashboard.
+
+Events that can't be correlated (e.g. outbound-only announcements) still produce traces with zero duration.
+
 ## Configuration
 
 Set the following environment variables (via `hooks.internal.entries.agentwatch.env` in `openclaw.json` or container env):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AGENTWATCH_URL` | `http://172.17.0.1:8470` | AgentWatch server URL (use Docker gateway IP from container) |
+| `AGENTWATCH_URL` | `http://172.17.0.1:8470` | AgentWatch server URL (see note below) |
 | `AGENTWATCH_TOKEN` | *(none)* | Optional auth token |
 | `AGENTWATCH_AGENT_NAME` | `openclaw-gateway` | Agent name in dashboard |
 
@@ -72,3 +78,13 @@ agentwatch serve --host 0.0.0.0 --port 8470
 ```
 
 Then open `http://localhost:8470` to see your OpenClaw telemetry.
+
+## Network note
+
+The default `AGENTWATCH_URL` uses `172.17.0.1` — the Docker bridge gateway IP that lets the container reach the host. This works when OpenClaw runs in Docker and AgentWatch runs on the host.
+
+| Setup | URL to use |
+|-------|-----------|
+| OpenClaw in Docker, AgentWatch on host | `http://172.17.0.1:8470` (default) |
+| Both on the same host (no Docker) | `http://localhost:8470` |
+| AgentWatch on a different machine | `http://<agentwatch-ip>:8470` |
