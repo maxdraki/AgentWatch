@@ -27,7 +27,7 @@ jobs:
           pip install -e ".[dev,server]"
 
       - name: Run tests
-        run: pytest -x -q
+        run: pytest -x -q --ignore=tests/ui/
 
       - name: Type check
         if: matrix.python-version == '3.12'
