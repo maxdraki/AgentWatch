@@ -56,7 +56,7 @@ import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 
 @dataclass
@@ -208,17 +208,17 @@ def _load_file(path: str) -> dict[str, Any]:
     content = p.read_text()
 
     if p.suffix == ".json":
-        return json.loads(content)
+        return cast(dict[str, Any], json.loads(content))
 
     if p.suffix == ".toml":
         # Use tomllib (Python 3.11+) or fall back to basic parsing
         try:
             import tomllib
-            return tomllib.loads(content)
+            return cast(dict[str, Any], tomllib.loads(content))
         except ImportError:
             try:
                 import tomli
-                return tomli.loads(content)
+                return cast(dict[str, Any], tomli.loads(content))
             except ImportError:
                 # Basic TOML-like parsing for simple flat configs
                 return _basic_toml_parse(content)

@@ -39,7 +39,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Generator
+from typing import Any, Callable, Generator, cast
 
 import agentwatch
 from agentwatch.models import HealthStatus, LogLevel
@@ -263,7 +263,7 @@ class OpenClawInstrumentation:
                 try:
                     with open(config_path) as f:
                         config = json.load(f)
-                    return config.get("agent", {}).get("name")
+                    return cast("str | None", config.get("agent", {}).get("name"))
                 except (json.JSONDecodeError, KeyError, OSError):
                     pass
 

@@ -28,7 +28,7 @@ Options:
 from __future__ import annotations
 
 import time
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -78,7 +78,7 @@ class AgentWatchMiddleware(BaseHTTPMiddleware):
 
         # Skip excluded paths
         if path in self.exclude_paths:
-            return await call_next(request)
+            return cast(Response, await call_next(request))
 
         method = request.method
         trace_name = f"{method} {path}"
@@ -120,7 +120,7 @@ class AgentWatchMiddleware(BaseHTTPMiddleware):
             span.metadata = metadata
 
             try:
-                response = await call_next(request)
+                response = cast(Response, await call_next(request))
                 duration_ms = (time.monotonic() - start) * 1000
 
                 span.event(f"Response {response.status_code}", {
