@@ -54,6 +54,17 @@ Then enable in `openclaw.json`:
 
 Restart the gateway to load the hook.
 
+## Handlers
+
+This directory contains two handler implementations:
+
+| File | Status | Description |
+|------|--------|-------------|
+| `handler.ts` | **Active** | Works with current OpenClaw events (`message:received`, `message:sent`, `command`, `gateway:startup`) |
+| `index.ts` | Future | NDJSON stdin handler for `conversation:start/end` and `model:used` events (not yet emitted by OpenClaw) |
+
+Use `handler.ts` — it's the one that works with OpenClaw v2026.3.x.
+
 ## How it works
 
 The hook correlates `message:received` and `message:sent` events by conversation ID to compute **real round-trip duration** — the time from when a message arrives to when the reply is delivered. Each conversation turn becomes a trace with nested spans (conversation + delivery), giving you a waterfall view in the dashboard.
