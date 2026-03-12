@@ -1,5 +1,5 @@
 /**
- * AgentWatch OpenClaw Hook
+ * AgentWatch OpenClaw Hook — NDJSON event handler
  *
  * Bridges OpenClaw session events to AgentWatch traces and model usage.
  *
@@ -7,6 +7,12 @@
  *   - conversation:start  → opens a trace in AgentWatch
  *   - conversation:end    → closes the trace with duration and status
  *   - model:used          → records model invocation, tokens, and cost
+ *
+ * IMPORTANT: As of OpenClaw v2026.3.x, the gateway does NOT emit
+ * conversation:start, conversation:end, or model:used events. This
+ * handler is a forward-looking implementation for when those events
+ * are added. For current telemetry, use handler.ts which works with
+ * the existing message:received / message:sent / command events.
  *
  * Correlation key:
  *   Uses conversationId when present (WhatsApp, Discord channels).

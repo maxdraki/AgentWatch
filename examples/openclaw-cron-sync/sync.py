@@ -2,7 +2,7 @@
 """
 Sync OpenClaw cron run statuses to AgentWatch.
 
-Polls `openclaw cron list --json` and `openclaw cron runs <id> --json`
+Polls `openclaw cron list --json` and `openclaw cron runs --id <id>`
 to extract recent job outcomes, then POSTs them to the AgentWatch
 ingestion endpoint.
 
@@ -32,11 +32,25 @@ INGEST_URL = f"{AGENTWATCH_URL}/api/v1/ingest/cron_run"
 LOOKBACK_HOURS = int(os.environ.get("LOOKBACK_HOURS", "1"))
 
 
-def run_openclaw(*args: str) -> list[dict]:
-    """Run an openclaw CLI command and return parsed JSON output."""
+def run_openclaw(*args: str, json_flag: bool = True) -> list[dict]:
+    """Run an openclaw CLI command and return parsed JSON output.
+
+    The json_flag parameter controls whether --json is appended to the
+    command.  Some subcommands (e.g. ``cron runs``) do not support
+    ``--json`` and will fail if it is passed.
+
+    OpenClaw may print non-JSON lines to stdout (e.g. config version
+    warnings), so the parser scans for the first ``{`` or ``[`` to find
+    the JSON payload.  List responses are often wrapped in an object
+    (``{"jobs": [...]}``, ``{"entries": [...]}``, ``{"runs": [...]}``)
+    which is automatically unwrapped.
+    """
     try:
+        cmd = ["openclaw", *args]
+        if json_flag:
+            cmd.append("--json")
         result = subprocess.run(
-            ["openclaw", *args, "--json"],
+            cmd,
             capture_output=True,
             text=True,
             timeout=30,
@@ -47,9 +61,25 @@ def run_openclaw(*args: str) -> list[dict]:
                 file=sys.stderr,
             )
             return []
-        if not result.stdout.strip():
+        stdout = result.stdout.strip()
+        if not stdout:
             return []
-        return json.loads(result.stdout)
+        # Find the JSON payload (skip non-JSON lines like config warnings)
+        json_start = None
+        for i, ch in enumerate(stdout):
+            if ch in ('{', '['):
+                json_start = i
+                break
+        if json_start is None:
+            return []
+        parsed = json.loads(stdout[json_start:])
+        # Unwrap list responses wrapped in an object
+        if isinstance(parsed, dict):
+            for key in ("jobs", "entries", "runs"):
+                if key in parsed and isinstance(parsed[key], list):
+                    return parsed[key]
+            return [parsed]
+        return parsed
     except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError) as e:
         print(f"  ⚠ openclaw error: {e}", file=sys.stderr)
         return []
@@ -78,9 +108,7 @@ def post_records(records: list[dict]) -> int:
 
 def main() -> None:
     print(f"🔄 Syncing OpenClaw cron runs → {AGENTWATCH_URL}")
-    cutoff = (
-        datetime.now(timezone.utc) - timedelta(hours=LOOKBACK_HOURS)
-    ).isoformat()
+    cutoff_dt = datetime.now(timezone.utc) - timedelta(hours=LOOKBACK_HOURS)
 
     jobs = run_openclaw("cron", "list")
     if not jobs:
@@ -95,21 +123,21 @@ def main() -> None:
         if not job_id:
             continue
 
-        runs = run_openclaw("cron", "runs", str(job_id))
+        # `cron runs` requires --id flag and does not support --json
+        runs = run_openclaw("cron", "runs", "--id", str(job_id), "--limit", "20", json_flag=False)
         for run in runs:
-            # Skip runs outside the lookback window
-            ts = run.get("startedAt") or run.get("timestamp") or ""
-            if ts and ts < cutoff:
+            # Only include finished runs
+            if run.get("action") != "finished":
                 continue
 
-            # Map openclaw run status to agentwatch status
-            if run.get("success") is True:
-                status = "ok"
-            elif run.get("success") is False:
-                status = "error"
-            else:
-                status = run.get("status", "unknown")
+            # Skip runs outside the lookback window (ts is epoch ms)
+            ts_ms = run.get("ts") or run.get("runAtMs") or 0
+            if ts_ms:
+                run_time = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
+                if run_time < cutoff_dt:
+                    continue
 
+            status = run.get("status", "unknown")
             error = run.get("error") or run.get("errorMessage")
             duration_ms = run.get("durationMs") or run.get("duration_ms")
 
